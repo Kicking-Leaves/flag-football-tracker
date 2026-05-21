@@ -1,25 +1,96 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getTeams, getGames, computeSeasonStats } from "@/lib/db";
 import LogoutButton from "./logout-button";
+
+export const dynamic = "force-dynamic";
 
 export default async function Home() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  if (!user) redirect("/auth/login");
 
-  if (!user) {
-    redirect("/auth/login");
-  }
+  const teams = await getTeams(supabase);
+
+  // For each team, pull games to compute the season record summary.
+  const teamCards = await Promise.all(
+    teams.map(async (t) => {
+      const games = await getGames(supabase, t.id);
+      const season = computeSeasonStats(games);
+      return { team: t, games, season };
+    }),
+  );
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center gap-6 p-6">
-      <h1 className="text-3xl font-semibold">Welcome to RouteRunnr</h1>
-      <p className="text-sm text-gray-600">Signed in as {user.email}</p>
-      <LogoutButton />
-      <p className="mt-12 max-w-sm text-center text-xs text-gray-400">
-        This is a Phase 1 placeholder. The real dashboard arrives in Phase 2.
-      </p>
+    <main className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-blue-50">
+      <div className="mx-auto max-w-4xl p-6">
+        <div className="mb-8 rounded-2xl bg-gradient-to-r from-green-600 to-blue-600 p-8 text-white shadow-2xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-4xl font-bold">RouteRunnr</h1>
+              <p className="mt-1 text-lg text-green-100">
+                Flag football game tracking — WIAA Washington State Rules
+              </p>
+              <p className="mt-2 text-sm text-green-100">
+                Signed in as {user.email}
+              </p>
+            </div>
+            <LogoutButton />
+          </div>
+          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Link
+              href="/teams/new"
+              className="flex items-center justify-center rounded-xl bg-white py-4 text-lg font-bold text-green-600 shadow-lg transition hover:bg-green-50"
+            >
+              + New Team
+            </Link>
+          </div>
+        </div>
+
+        <h2 className="mb-4 text-2xl font-bold text-gray-800">Your Teams</h2>
+
+        {teamCards.length === 0 ? (
+          <div className="rounded-xl bg-white p-12 text-center shadow">
+            <p className="text-lg text-gray-500">
+              No teams yet. Create your first team to start tracking games.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {teamCards.map(({ team, season }) => (
+              <Link
+                key={team.id}
+                href={`/teams/${team.id}`}
+                className="block rounded-xl bg-white p-6 shadow-lg transition hover:shadow-xl"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xl font-bold text-gray-800">
+                      {team.name}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-500">
+                      {team.player_count ?? 0} players · {season.gamesPlayed}{" "}
+                      games played
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    {season.gamesPlayed > 0 && (
+                      <p className="text-2xl font-bold text-gray-800">
+                        {season.wins}-{season.losses}
+                        {season.ties > 0 ? `-${season.ties}` : ""}
+                      </p>
+                    )}
+                    <p className="text-sm text-gray-400">View details →</p>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
     </main>
   );
 }
