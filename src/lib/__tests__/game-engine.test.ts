@@ -750,6 +750,40 @@ describe("undoLastPlay", () => {
     expect(undone.plays).toHaveLength(0);
     expect(undone.score.team).toBe(0);
   });
+
+  it("auto-detected first down (crossedTarget) marks play.firstDown so stats track", () => {
+    const state = makeGameState({ lineOfScrimmage: 5, firstDownTarget: 17, down: 1 });
+    // 13 yards from LOS 5 → new LOS 18, crosses 17 → auto first down
+    const after = addPlay(state, passPlay(13));
+    expect(after.stats.offense.firstDowns).toBe(1);
+    expect(after.plays[after.plays.length - 1].firstDown).toBe(true);
+  });
+
+  it("undo after auto-detected first down reverts firstDowns stat", () => {
+    const state = makeGameState({ lineOfScrimmage: 5, firstDownTarget: 17, down: 1 });
+    // Auto-detected first down — caller does NOT pass firstDown:true
+    const after = addPlay(state, passPlay(13));
+    expect(after.stats.offense.firstDowns).toBe(1);
+    expect(after.down).toBe(1);
+
+    const undone = undoLastPlay(after);
+    expect(undone.stats.offense.firstDowns).toBe(0);
+    expect(undone.down).toBe(1); // pre-play down
+    expect(undone.lineOfScrimmage).toBe(5);
+    expect(undone.firstDownTarget).toBe(17);
+    expect(undone.plays).toHaveLength(0);
+  });
+
+  it("undo after explicit firstDown:true also reverts firstDowns stat (no double count)", () => {
+    const state = makeGameState({ lineOfScrimmage: 5, firstDownTarget: 17, down: 1 });
+    // Caller explicitly flags first down (e.g. defensive PI awarded first down
+    // without crossing the marker)
+    const after = addPlay(state, passPlay(3, { firstDown: true }));
+    expect(after.stats.offense.firstDowns).toBe(1);
+
+    const undone = undoLastPlay(after);
+    expect(undone.stats.offense.firstDowns).toBe(0);
+  });
 });
 
 // ===========================================================================

@@ -280,6 +280,11 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
     g.firstDownTarget = getFirstDownTargetLine(newLOS, null);
     g.yardsToGo = calculateYardsToFirstDown(newLOS, g.firstDownTarget);
     if (!playData.firstDown) g.stats.offense.firstDowns++;
+    // Ensure the stored play record reflects that a first down was earned so
+    // undoLastPlay can correctly reverse the stat. Without this, auto-detected
+    // first downs (crossedTarget) leak past undo because lastPlay.firstDown
+    // is falsy.
+    play.firstDown = true;
   } else {
     g.down++;
     if (g.down > 4) {
