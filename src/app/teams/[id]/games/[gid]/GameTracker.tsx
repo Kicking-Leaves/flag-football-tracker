@@ -13,6 +13,7 @@ import PenaltyEntry from "@/components/game/PenaltyEntry";
 import InterceptionDialog from "@/components/game/InterceptionDialog";
 import OvertimeSetupDialog from "@/components/game/OvertimeSetupDialog";
 import OvertimeConversionEntry from "@/components/game/OvertimeConversionEntry";
+import InGameStatsPanel from "@/components/game/InGameStatsPanel";
 import type { GameState, Possession } from "@/lib/types";
 
 interface GameTrackerProps {
@@ -63,6 +64,7 @@ export default function GameTracker({
   const [endHalfReceiver, setEndHalfReceiver] = useState<Possession>("team");
   const [showUndoConfirm, setShowUndoConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showStatsPanel, setShowStatsPanel] = useState(false);
 
   // Active mode resolves to pointAfter if a TD just happened.
   const activeMode: Mode = needsPointAfter ? "pointAfter" : mode;
@@ -416,12 +418,13 @@ export default function GameTracker({
           >
             Settings
           </button>
-          <Link
-            href={`/teams/${teamId}/games/${gameId}/stats`}
+          <button
+            type="button"
+            onClick={() => setShowStatsPanel(true)}
             className="rounded-xl bg-purple-600 py-3 text-center font-bold text-white"
           >
             Stats
-          </Link>
+          </button>
           <button
             type="button"
             onClick={handleEndGame}
@@ -431,6 +434,15 @@ export default function GameTracker({
           </button>
         </div>
       )}
+
+      {/* Slide-over in-game stats panel */}
+      <InGameStatsPanel
+        open={showStatsPanel}
+        onClose={() => setShowStatsPanel(false)}
+        state={state}
+        teamName={teamName}
+        opponentName={opponentName}
+      />
     </main>
   );
 }

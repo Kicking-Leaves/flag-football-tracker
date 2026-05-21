@@ -18,8 +18,34 @@ export interface Player {
   name: string;
   number: string;
   active: boolean;
+  graduation_year?: number | null;
+  position_offense?: string | null;
+  position_defense?: string | null;
+  notes?: string | null;
   created_at?: string;
 }
+
+/** Allowed offensive positions for a roster player. Empty/null = unspecified. */
+export const OFFENSE_POSITIONS = [
+  "QB",
+  "WR",
+  "RB",
+  "TE",
+  "C",
+  "Flex",
+] as const;
+export type OffensePosition = (typeof OFFENSE_POSITIONS)[number];
+
+/** Allowed defensive positions for a roster player. Empty/null = unspecified. */
+export const DEFENSE_POSITIONS = [
+  "CB",
+  "S",
+  "LB",
+  "DE",
+  "DT",
+  "Flex",
+] as const;
+export type DefensePosition = (typeof DEFENSE_POSITIONS)[number];
 
 export type GameStatus = "in_progress" | "completed";
 export type GameResult = "win" | "loss" | "tie";

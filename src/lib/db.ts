@@ -8,11 +8,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   Game,
   GameState,
+  Player,
   PlayerStats,
   SeasonStats,
   Team,
 } from "./types";
 import { makeEmptyPlayerStats } from "./game-engine";
+
+const PLAYER_SELECT =
+  "id, team_id, name, number, active, graduation_year, position_offense, position_defense, notes, created_at";
 
 // ---------- Teams ----------
 
@@ -107,14 +111,35 @@ export async function deleteTeam(
 export async function getPlayers(
   supabase: SupabaseClient,
   teamId: string,
-) {
+): Promise<Player[]> {
   const { data, error } = await supabase
     .from("players")
-    .select("id, team_id, name, number, active, created_at")
+    .select(PLAYER_SELECT)
     .eq("team_id", teamId)
     .order("number", { ascending: true });
   if (error) throw error;
-  return data ?? [];
+  return (data ?? []) as Player[];
+}
+
+export async function getPlayer(
+  supabase: SupabaseClient,
+  playerId: string,
+): Promise<Player | null> {
+  const { data, error } = await supabase
+    .from("players")
+    .select(PLAYER_SELECT)
+    .eq("id", playerId)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as Player) ?? null;
+}
+
+/** Extra profile fields accepted by createPlayer / updatePlayer. */
+export interface PlayerProfileInput {
+  graduation_year?: number | null;
+  position_offense?: string | null;
+  position_defense?: string | null;
+  notes?: string | null;
 }
 
 export async function createPlayer(
@@ -122,20 +147,38 @@ export async function createPlayer(
   teamId: string,
   name: string,
   number: string,
-) {
+  profile: PlayerProfileInput = {},
+): Promise<Player> {
   const { data, error } = await supabase
     .from("players")
-    .insert({ team_id: teamId, name, number, active: true })
-    .select("id, team_id, name, number, active, created_at")
+    .insert({
+      team_id: teamId,
+      name,
+      number,
+      active: true,
+      graduation_year: profile.graduation_year ?? null,
+      position_offense: profile.position_offense ?? null,
+      position_defense: profile.position_defense ?? null,
+      notes: profile.notes ?? null,
+    })
+    .select(PLAYER_SELECT)
     .single();
   if (error) throw error;
-  return data;
+  return data as Player;
 }
 
 export async function updatePlayer(
   supabase: SupabaseClient,
   id: string,
-  patch: { name?: string; number?: string; active?: boolean },
+  patch: {
+    name?: string;
+    number?: string;
+    active?: boolean;
+    graduation_year?: number | null;
+    position_offense?: string | null;
+    position_defense?: string | null;
+    notes?: string | null;
+  },
 ) {
   const { error } = await supabase.from("players").update(patch).eq("id", id);
   if (error) throw error;
@@ -228,6 +271,55 @@ export async function deleteGame(
 ): Promise<void> {
   const { error } = await supabase.from("games").delete().eq("id", gameId);
   if (error) throw error;
+}
+
+// ---------- Per-player aggregation (pure — no Supabase call) ----------
+
+/**
+ * Aggregate a single player's stats across all completed games for a team.
+ * Returns the running total plus the per-game log (newest first), including
+ * games where the player did not record stats so the caller can decide how
+ * to display them.
+ */
+export function computePlayerSeasonStats(
+  games: Game[],
+  playerId: string,
+  fallbackName: string,
+  fallbackNumber: string,
+): {
+  total: PlayerStats;
+  lines: { game: Game; stats: PlayerStats | null }[];
+} {
+  const total = makeEmptyPlayerStats(fallbackName, fallbackNumber);
+  const completed = games
+    .filter((g) => g.status === "completed")
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.game_date).getTime() - new Date(a.game_date).getTime(),
+    );
+  const lines: { game: Game; stats: PlayerStats | null }[] = [];
+
+  for (const game of completed) {
+    const ps = (game.game_data?.playerStats ?? {})[playerId];
+    lines.push({ game, stats: ps ?? null });
+    if (!ps) continue;
+    total.offense.passAttempts += ps.offense.passAttempts ?? 0;
+    total.offense.completions += ps.offense.completions ?? 0;
+    total.offense.incompletions += ps.offense.incompletions ?? 0;
+    total.offense.passingYards += ps.offense.passingYards ?? 0;
+    total.offense.interceptions += ps.offense.interceptions ?? 0;
+    total.offense.rushAttempts += ps.offense.rushAttempts ?? 0;
+    total.offense.rushingYards += ps.offense.rushingYards ?? 0;
+    total.offense.receptions += ps.offense.receptions ?? 0;
+    total.offense.receivingYards += ps.offense.receivingYards ?? 0;
+    total.offense.touchdowns += ps.offense.touchdowns ?? 0;
+    total.defense.flagPulls += ps.defense.flagPulls ?? 0;
+    total.defense.interceptions += ps.defense.interceptions ?? 0;
+    total.defense.tacklesForLoss += ps.defense.tacklesForLoss ?? 0;
+    total.defense.passDeflections += ps.defense.passDeflections ?? 0;
+  }
+  return { total, lines };
 }
 
 // ---------- Season stats (pure — no Supabase call) ----------

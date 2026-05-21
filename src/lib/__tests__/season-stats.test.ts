@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeSeasonStats } from "../db";
+import { computePlayerSeasonStats, computeSeasonStats } from "../db";
 import { makeGameState, makeGame, PLAYER_QB, PLAYER_WR, DEFAULT_ROSTER } from "./helpers";
 import type { Game } from "../types";
 
@@ -295,5 +295,211 @@ describe("computeSeasonStats — player stat aggregation", () => {
     const game2 = makeGame("win", 7, 0, { playerStats: {} });
     const stats = computeSeasonStats([game1, game2]);
     expect(stats.playerStats[PLAYER_QB.id].offense.passingYards).toBe(75);
+  });
+});
+
+// ===========================================================================
+// Per-player season aggregation (computePlayerSeasonStats)
+// ===========================================================================
+
+describe("computePlayerSeasonStats — aggregates a single player across games", () => {
+  function gameForQB(passingYards: number, rushYards = 0, flagPulls = 0): Game {
+    return makeGame("win", 14, 0, {
+      playerStats: {
+        [PLAYER_QB.id]: {
+          name: PLAYER_QB.name,
+          number: PLAYER_QB.number,
+          offense: {
+            passAttempts: 6,
+            completions: 4,
+            incompletions: 2,
+            passingYards,
+            interceptions: 0,
+            rushAttempts: rushYards > 0 ? 3 : 0,
+            rushingYards: rushYards,
+            receptions: 0,
+            receivingYards: 0,
+            touchdowns: 1,
+          },
+          defense: {
+            flagPulls,
+            interceptions: 0,
+            tacklesForLoss: 0,
+            passDeflections: 0,
+          },
+        },
+      },
+    });
+  }
+
+  it("returns zero totals and empty log when no games provided", () => {
+    const { total, lines } = computePlayerSeasonStats(
+      [],
+      PLAYER_QB.id,
+      PLAYER_QB.name,
+      PLAYER_QB.number,
+    );
+    expect(total.offense.passAttempts).toBe(0);
+    expect(total.offense.passingYards).toBe(0);
+    expect(total.defense.flagPulls).toBe(0);
+    expect(lines).toHaveLength(0);
+  });
+
+  it("sums offense stats across multiple completed games", () => {
+    const games = [gameForQB(80), gameForQB(120, 25), gameForQB(40, 0, 3)];
+    const { total } = computePlayerSeasonStats(
+      games,
+      PLAYER_QB.id,
+      PLAYER_QB.name,
+      PLAYER_QB.number,
+    );
+    expect(total.offense.passingYards).toBe(240);
+    expect(total.offense.passAttempts).toBe(18);
+    expect(total.offense.touchdowns).toBe(3);
+    expect(total.offense.rushingYards).toBe(25);
+    expect(total.defense.flagPulls).toBe(3);
+  });
+
+  it("excludes in-progress games from totals but only completed appear in lines", () => {
+    const completed = gameForQB(80);
+    const ip: Game = {
+      id: "ip",
+      team_id: "team-1",
+      opponent_name: "Live FC",
+      game_date: "2026-02-01",
+      status: "in_progress",
+      result: null,
+      game_data: makeGameState({
+        playerStats: {
+          [PLAYER_QB.id]: {
+            name: PLAYER_QB.name,
+            number: PLAYER_QB.number,
+            offense: {
+              passAttempts: 99,
+              completions: 99,
+              incompletions: 0,
+              passingYards: 999,
+              interceptions: 0,
+              rushAttempts: 0,
+              rushingYards: 0,
+              receptions: 0,
+              receivingYards: 0,
+              touchdowns: 0,
+            },
+            defense: {
+              flagPulls: 0,
+              interceptions: 0,
+              tacklesForLoss: 0,
+              passDeflections: 0,
+            },
+          },
+        },
+      }),
+    };
+    const { total, lines } = computePlayerSeasonStats(
+      [ip, completed],
+      PLAYER_QB.id,
+      PLAYER_QB.name,
+      PLAYER_QB.number,
+    );
+    expect(total.offense.passingYards).toBe(80);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].game.status).toBe("completed");
+  });
+
+  it("includes a null stats line when the player did not play that game", () => {
+    const playedGame = gameForQB(60);
+    const noStatGame = makeGame("win", 7, 0, { playerStats: {} });
+    const { total, lines } = computePlayerSeasonStats(
+      [playedGame, noStatGame],
+      PLAYER_QB.id,
+      PLAYER_QB.name,
+      PLAYER_QB.number,
+    );
+    expect(total.offense.passingYards).toBe(60);
+    expect(lines).toHaveLength(2);
+    expect(lines.filter((l) => l.stats === null)).toHaveLength(1);
+    expect(lines.filter((l) => l.stats !== null)).toHaveLength(1);
+  });
+
+  it("sorts the game log newest first by game_date", () => {
+    const older: Game = {
+      ...gameForQB(50),
+      game_date: "2026-01-10",
+    };
+    const newer: Game = {
+      ...gameForQB(80),
+      game_date: "2026-03-01",
+    };
+    const middle: Game = {
+      ...gameForQB(60),
+      game_date: "2026-02-15",
+    };
+    const { lines } = computePlayerSeasonStats(
+      [older, middle, newer],
+      PLAYER_QB.id,
+      PLAYER_QB.name,
+      PLAYER_QB.number,
+    );
+    expect(lines.map((l) => l.game.game_date)).toEqual([
+      "2026-03-01",
+      "2026-02-15",
+      "2026-01-10",
+    ]);
+  });
+
+  it("uses fallback name/number when player has no stats anywhere", () => {
+    const games = [makeGame("win", 7, 0, { playerStats: {} })];
+    const { total } = computePlayerSeasonStats(
+      games,
+      "missing-id",
+      "Ghost Player",
+      "99",
+    );
+    expect(total.name).toBe("Ghost Player");
+    expect(total.number).toBe("99");
+    expect(total.offense.passAttempts).toBe(0);
+  });
+
+  it("ignores stats keyed under a different player id", () => {
+    const game = makeGame("win", 14, 0, {
+      playerStats: {
+        [PLAYER_WR.id]: {
+          name: PLAYER_WR.name,
+          number: PLAYER_WR.number,
+          offense: {
+            passAttempts: 0,
+            completions: 0,
+            incompletions: 0,
+            passingYards: 0,
+            interceptions: 0,
+            rushAttempts: 0,
+            rushingYards: 0,
+            receptions: 5,
+            receivingYards: 90,
+            touchdowns: 1,
+          },
+          defense: {
+            flagPulls: 0,
+            interceptions: 0,
+            tacklesForLoss: 0,
+            passDeflections: 0,
+          },
+        },
+      },
+    });
+    const { total } = computePlayerSeasonStats(
+      [game],
+      PLAYER_QB.id,
+      PLAYER_QB.name,
+      PLAYER_QB.number,
+    );
+    expect(total.offense.receptions).toBe(0);
+    expect(total.offense.passingYards).toBe(0);
+  });
+
+  it("references DEFAULT_ROSTER ids to ensure helper continues to expose them", () => {
+    // sanity check: DEFAULT_ROSTER ids are stable, keep the import live.
+    expect(DEFAULT_ROSTER.map((p) => p.id)).toContain(PLAYER_QB.id);
   });
 });
