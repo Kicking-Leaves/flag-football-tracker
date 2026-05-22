@@ -10,13 +10,52 @@ import type {
   GameState,
   Player,
   PlayerStats,
+  Season,
   SeasonStats,
+  SeasonTerm,
   Team,
 } from "./types";
+import { seasonDisplayName } from "./types";
 import { makeEmptyPlayerStats } from "./game-engine";
 
 const PLAYER_SELECT =
-  "id, team_id, name, number, active, graduation_year, position_offense, position_defense, notes, created_at";
+  "id, team_id, season_id, name, number, active, graduation_year, position_offense, position_defense, notes, created_at";
+
+const GAME_SELECT =
+  "id, team_id, season_id, opponent_name, game_date, status, result, game_data, created_at, updated_at";
+
+const SEASON_SELECT = "id, team_id, year, term, is_active, created_at";
+
+/** DB row shape for a season, before we attach the computed displayName. */
+interface SeasonRow {
+  id: string;
+  team_id: string;
+  year: number;
+  term: SeasonTerm | null;
+  is_active: boolean;
+  created_at?: string;
+}
+
+function hydrateSeason(row: SeasonRow): Season {
+  return { ...row, displayName: seasonDisplayName(row.year, row.term) };
+}
+
+/** Term ordering used when sorting seasons within the same year. */
+const TERM_ORDER: Record<string, number> = {
+  Winter: 0,
+  Spring: 1,
+  Summer: 2,
+  Fall: 3,
+};
+
+function compareSeasonsDesc(a: SeasonRow, b: SeasonRow): number {
+  if (a.year !== b.year) return b.year - a.year;
+  // Within the same year: Fall > Summer > Spring > Winter (newest term last in
+  // the calendar appears first). Null term sorts after named terms.
+  const at = a.term ? TERM_ORDER[a.term] : -1;
+  const bt = b.term ? TERM_ORDER[b.term] : -1;
+  return bt - at;
+}
 
 // ---------- Teams ----------
 
@@ -102,21 +141,157 @@ export async function deleteTeam(
     .delete()
     .eq("team_id", id);
   if (pErr) throw pErr;
+  // Seasons cascade is best-effort: with players + games gone, no FKs remain.
+  const { error: sErr } = await supabase
+    .from("seasons")
+    .delete()
+    .eq("team_id", id);
+  if (sErr) throw sErr;
   const { error } = await supabase.from("teams").delete().eq("id", id);
+  if (error) throw error;
+}
+
+// ---------- Seasons ----------
+
+/**
+ * Return all seasons for a team, newest year first; ties broken by term order.
+ */
+export async function getSeasons(
+  supabase: SupabaseClient,
+  teamId: string,
+): Promise<Season[]> {
+  const { data, error } = await supabase
+    .from("seasons")
+    .select(SEASON_SELECT)
+    .eq("team_id", teamId);
+  if (error) throw error;
+  const rows = (data ?? []) as SeasonRow[];
+  return rows.slice().sort(compareSeasonsDesc).map(hydrateSeason);
+}
+
+export async function getSeason(
+  supabase: SupabaseClient,
+  seasonId: string,
+): Promise<Season | null> {
+  const { data, error } = await supabase
+    .from("seasons")
+    .select(SEASON_SELECT)
+    .eq("id", seasonId)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? hydrateSeason(data as SeasonRow) : null;
+}
+
+export async function getActiveSeason(
+  supabase: SupabaseClient,
+  teamId: string,
+): Promise<Season | null> {
+  const { data, error } = await supabase
+    .from("seasons")
+    .select(SEASON_SELECT)
+    .eq("team_id", teamId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (error) throw error;
+  return data ? hydrateSeason(data as SeasonRow) : null;
+}
+
+/**
+ * Create a new season and atomically deactivate any existing active season for
+ * the same team (Postgres enforces only-one-active via the partial unique
+ * index `seasons_one_active_per_team`).
+ */
+export async function createSeason(
+  supabase: SupabaseClient,
+  teamId: string,
+  year: number,
+  term: SeasonTerm | null = null,
+): Promise<Season> {
+  // Deactivate any currently active season for this team first.
+  const { error: deactivateErr } = await supabase
+    .from("seasons")
+    .update({ is_active: false })
+    .eq("team_id", teamId)
+    .eq("is_active", true);
+  if (deactivateErr) throw deactivateErr;
+
+  const { data, error } = await supabase
+    .from("seasons")
+    .insert({ team_id: teamId, year, term, is_active: true })
+    .select(SEASON_SELECT)
+    .single();
+  if (error) throw error;
+  return hydrateSeason(data as SeasonRow);
+}
+
+/** Make `seasonId` the active season for its team; deactivate all others. */
+export async function setActiveSeason(
+  supabase: SupabaseClient,
+  seasonId: string,
+): Promise<void> {
+  // Need the team_id so we can deactivate siblings.
+  const { data: row, error: fetchErr } = await supabase
+    .from("seasons")
+    .select("id, team_id")
+    .eq("id", seasonId)
+    .maybeSingle();
+  if (fetchErr) throw fetchErr;
+  if (!row) throw new Error("Season not found");
+
+  const { error: deactivateErr } = await supabase
+    .from("seasons")
+    .update({ is_active: false })
+    .eq("team_id", row.team_id)
+    .neq("id", seasonId);
+  if (deactivateErr) throw deactivateErr;
+
+  const { error: activateErr } = await supabase
+    .from("seasons")
+    .update({ is_active: true })
+    .eq("id", seasonId);
+  if (activateErr) throw activateErr;
+}
+
+export async function deleteSeason(
+  supabase: SupabaseClient,
+  seasonId: string,
+): Promise<void> {
+  // Detach any games / players first so the FK doesn't block the delete.
+  const { error: gErr } = await supabase
+    .from("games")
+    .update({ season_id: null })
+    .eq("season_id", seasonId);
+  if (gErr) throw gErr;
+  const { error: pErr } = await supabase
+    .from("players")
+    .delete()
+    .eq("season_id", seasonId);
+  if (pErr) throw pErr;
+  const { error } = await supabase.from("seasons").delete().eq("id", seasonId);
   if (error) throw error;
 }
 
 // ---------- Players ----------
 
+/**
+ * Fetch players for a team. If `seasonId` is provided, only return players for
+ * that season; otherwise return all players for the team (including legacy
+ * rows with null season_id).
+ */
 export async function getPlayers(
   supabase: SupabaseClient,
   teamId: string,
+  seasonId?: string | null,
 ): Promise<Player[]> {
-  const { data, error } = await supabase
+  let query = supabase
     .from("players")
     .select(PLAYER_SELECT)
     .eq("team_id", teamId)
     .order("number", { ascending: true });
+  if (seasonId) {
+    query = query.eq("season_id", seasonId);
+  }
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []) as Player[];
 }
@@ -142,9 +317,15 @@ export interface PlayerProfileInput {
   notes?: string | null;
 }
 
+/**
+ * Create a player belonging to a team + season. `seasonId` may be null to keep
+ * backwards compatibility with legacy code paths, but new UI should always
+ * pass it.
+ */
 export async function createPlayer(
   supabase: SupabaseClient,
   teamId: string,
+  seasonId: string | null,
   name: string,
   number: string,
   profile: PlayerProfileInput = {},
@@ -153,6 +334,7 @@ export async function createPlayer(
     .from("players")
     .insert({
       team_id: teamId,
+      season_id: seasonId,
       name,
       number,
       active: true,
@@ -191,17 +373,25 @@ export async function deletePlayer(supabase: SupabaseClient, id: string) {
 
 // ---------- Games ----------
 
+/**
+ * Fetch games for a team. If `seasonId` is provided, only return games for
+ * that season; otherwise return all games (including legacy rows with null
+ * season_id).
+ */
 export async function getGames(
   supabase: SupabaseClient,
   teamId: string,
+  seasonId?: string | null,
 ): Promise<Game[]> {
-  const { data, error } = await supabase
+  let query = supabase
     .from("games")
-    .select(
-      "id, team_id, opponent_name, game_date, status, result, game_data, created_at, updated_at",
-    )
+    .select(GAME_SELECT)
     .eq("team_id", teamId)
     .order("game_date", { ascending: false });
+  if (seasonId) {
+    query = query.eq("season_id", seasonId);
+  }
+  const { data, error } = await query;
   if (error) throw error;
   return (data ?? []) as Game[];
 }
@@ -212,9 +402,7 @@ export async function getGame(
 ): Promise<Game | null> {
   const { data, error } = await supabase
     .from("games")
-    .select(
-      "id, team_id, opponent_name, game_date, status, result, game_data, created_at, updated_at",
-    )
+    .select(GAME_SELECT)
     .eq("id", gameId)
     .maybeSingle();
   if (error) throw error;
@@ -224,6 +412,7 @@ export async function getGame(
 export async function createGame(
   supabase: SupabaseClient,
   teamId: string,
+  seasonId: string | null,
   opponentName: string,
   gameDate: string,
   initialState: GameState,
@@ -232,15 +421,14 @@ export async function createGame(
     .from("games")
     .insert({
       team_id: teamId,
+      season_id: seasonId,
       opponent_name: opponentName,
       game_date: gameDate,
       status: "in_progress",
       result: null,
       game_data: initialState,
     })
-    .select(
-      "id, team_id, opponent_name, game_date, status, result, game_data, created_at, updated_at",
-    )
+    .select(GAME_SELECT)
     .single();
   if (error) throw error;
   return data as Game;

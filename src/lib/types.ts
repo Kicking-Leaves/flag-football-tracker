@@ -12,9 +12,38 @@ export interface Team {
   player_count?: number;
 }
 
+/** Allowed values for a season's term (academic period within a year). */
+export const SEASON_TERMS = ["Winter", "Spring", "Summer", "Fall"] as const;
+export type SeasonTerm = (typeof SEASON_TERMS)[number];
+
+/**
+ * A team's roster + schedule for a single year/term. Persisted in the
+ * `seasons` table; one season may be marked `is_active` per team at a time.
+ */
+export interface Season {
+  id: string;
+  team_id: string;
+  year: number;
+  term: SeasonTerm | null;
+  is_active: boolean;
+  created_at?: string;
+  /** Computed display helper, e.g. "Winter 2025" or "2025". Not stored. */
+  displayName: string;
+}
+
+/** Format a season's display name: "Winter 2025" or just "2025". */
+export function seasonDisplayName(
+  year: number,
+  term: SeasonTerm | null | undefined,
+): string {
+  return term ? `${term} ${year}` : String(year);
+}
+
 export interface Player {
   id: string;
   team_id: string;
+  /** Null for legacy players created before seasons were introduced. */
+  season_id?: string | null;
   name: string;
   number: string;
   active: boolean;
@@ -53,6 +82,8 @@ export type GameResult = "win" | "loss" | "tie";
 export interface Game {
   id: string;
   team_id: string;
+  /** Null for legacy games created before seasons were introduced. */
+  season_id?: string | null;
   opponent_name: string;
   game_date: string;
   status: GameStatus;

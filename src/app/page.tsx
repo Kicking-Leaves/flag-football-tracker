@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getTeams, getGames, computeSeasonStats } from "@/lib/db";
+import {
+  computeSeasonStats,
+  getActiveSeason,
+  getGames,
+  getTeams,
+} from "@/lib/db";
 import LogoutButton from "./logout-button";
 
 export const dynamic = "force-dynamic";
@@ -15,12 +20,15 @@ export default async function Home() {
 
   const teams = await getTeams(supabase);
 
-  // For each team, pull games to compute the season record summary.
+  // For each team, pull the active season's games to surface a record summary.
+  // Teams with no active season fall back to "all games" so legacy rows still
+  // contribute to the headline number.
   const teamCards = await Promise.all(
     teams.map(async (t) => {
-      const games = await getGames(supabase, t.id);
+      const active = await getActiveSeason(supabase, t.id);
+      const games = await getGames(supabase, t.id, active?.id ?? null);
       const season = computeSeasonStats(games);
-      return { team: t, games, season };
+      return { team: t, activeSeason: active, season };
     }),
   );
 
@@ -60,7 +68,7 @@ export default async function Home() {
           </div>
         ) : (
           <div className="space-y-4">
-            {teamCards.map(({ team, season }) => (
+            {teamCards.map(({ team, activeSeason, season }) => (
               <Link
                 key={team.id}
                 href={`/teams/${team.id}`}
@@ -72,6 +80,9 @@ export default async function Home() {
                       {team.name}
                     </p>
                     <p className="mt-1 text-sm text-gray-500">
+                      {activeSeason
+                        ? `${activeSeason.displayName} · `
+                        : "No active season · "}
                       {team.player_count ?? 0} players · {season.gamesPlayed}{" "}
                       games played
                     </p>
