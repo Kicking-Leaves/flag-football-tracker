@@ -2,15 +2,17 @@
 
 import { use, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   createGame,
+  getActiveSeason,
   getPlayers,
+  getSeasons,
   getTeam,
 } from "@/lib/db";
 import { makeInitialGameState } from "@/lib/game-engine";
-import type { Player, Possession } from "@/lib/types";
+import type { Player, Possession, Season } from "@/lib/types";
 
 export default function NewGamePage({
   params,
@@ -19,9 +21,14 @@ export default function NewGamePage({
 }) {
   const { id: teamId } = use(params);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const supabase = createClient();
+  const initialSeasonParam = searchParams.get("season");
 
   const [teamName, setTeamName] = useState("");
+  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasonId, setSeasonId] = useState<string | null>(initialSeasonParam);
+
   const [opponent, setOpponent] = useState("");
   const [gameDate, setGameDate] = useState(() => {
     const d = new Date();
@@ -35,27 +42,71 @@ export default function NewGamePage({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // Load team, season list, and pick a default season if none came via URL.
+  const loadShell = useCallback(async () => {
     setLoading(true);
     try {
       const [team, list] = await Promise.all([
         getTeam(supabase, teamId),
-        getPlayers(supabase, teamId),
+        getSeasons(supabase, teamId),
       ]);
       if (team) setTeamName(team.name);
-      const active = (list as Player[]).filter((p) => p.active);
-      setPlayers(active);
-      setSelected(new Set(active.map((p) => p.id)));
+      setSeasons(list);
+      if (!seasonId) {
+        const active = await getActiveSeason(supabase, teamId);
+        if (active) {
+          setSeasonId(active.id);
+        } else if (list.length > 0) {
+          setSeasonId(list[0].id);
+        }
+      } else {
+        // Validate the supplied season belongs to this team.
+        const found = list.find((s) => s.id === seasonId);
+        if (!found) {
+          const active = await getActiveSeason(supabase, teamId);
+          setSeasonId(active?.id ?? list[0]?.id ?? null);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load team");
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supabase, teamId]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadShell();
+  }, [loadShell]);
+
+  // Whenever the active season changes, reload its players.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!seasonId) {
+        setPlayers([]);
+        setSelected(new Set());
+        return;
+      }
+      try {
+        const list = await getPlayers(supabase, teamId, seasonId);
+        if (cancelled) return;
+        const active = (list as Player[]).filter((p) => p.active);
+        setPlayers(active);
+        setSelected(new Set(active.map((p) => p.id)));
+      } catch (err) {
+        if (!cancelled) {
+          setError(
+            err instanceof Error ? err.message : "Failed to load roster",
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seasonId, teamId]);
 
   function toggle(id: string) {
     setSelected((prev) => {
@@ -84,6 +135,7 @@ export default function NewGamePage({
       const game = await createGame(
         supabase,
         teamId,
+        seasonId,
         opponent.trim(),
         new Date(`${gameDate}T12:00:00`).toISOString(),
         state,
@@ -96,12 +148,16 @@ export default function NewGamePage({
     }
   }
 
+  const backHref = seasonId
+    ? `/teams/${teamId}/seasons/${seasonId}`
+    : `/teams/${teamId}`;
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-blue-50 p-6">
       <div className="mx-auto max-w-2xl">
         <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 to-purple-600 p-6 text-white shadow-2xl">
           <Link
-            href={`/teams/${teamId}`}
+            href={backHref}
             className="text-sm text-blue-100 underline"
           >
             ← {teamName || "Team"}
@@ -119,6 +175,37 @@ export default function NewGamePage({
             onSubmit={handleStart}
             className="space-y-4 rounded-2xl bg-white p-6 shadow-xl"
           >
+            <div>
+              <label className="mb-2 block text-sm font-bold text-gray-700">
+                Season
+              </label>
+              {seasons.length === 0 ? (
+                <div className="rounded-xl bg-yellow-50 p-4 text-sm text-yellow-800">
+                  No seasons yet.{" "}
+                  <Link
+                    href={`/teams/${teamId}`}
+                    className="underline"
+                  >
+                    Create one first
+                  </Link>
+                  .
+                </div>
+              ) : (
+                <select
+                  value={seasonId ?? ""}
+                  onChange={(e) => setSeasonId(e.target.value || null)}
+                  className="w-full rounded-xl border-2 border-gray-300 bg-white px-4 py-3 font-semibold focus:border-blue-500 focus:outline-none"
+                >
+                  {seasons.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.displayName}
+                      {s.is_active ? " (active)" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
             <div>
               <label className="mb-2 block text-sm font-bold text-gray-700">
                 Opponent
@@ -183,13 +270,22 @@ export default function NewGamePage({
               </label>
               {players.length === 0 ? (
                 <div className="rounded-xl bg-yellow-50 p-4 text-sm text-yellow-800">
-                  No active players.{" "}
-                  <Link
-                    href={`/teams/${teamId}/roster`}
-                    className="underline"
-                  >
-                    Add players first
-                  </Link>
+                  No active players in this season.{" "}
+                  {seasonId ? (
+                    <Link
+                      href={`/teams/${teamId}/roster?season=${seasonId}`}
+                      className="underline"
+                    >
+                      Add players first
+                    </Link>
+                  ) : (
+                    <Link
+                      href={`/teams/${teamId}/roster`}
+                      className="underline"
+                    >
+                      Add players first
+                    </Link>
+                  )}
                   .
                 </div>
               ) : (
@@ -225,7 +321,7 @@ export default function NewGamePage({
 
             <div className="grid grid-cols-2 gap-3">
               <Link
-                href={`/teams/${teamId}`}
+                href={backHref}
                 className="rounded-xl bg-gray-200 py-4 text-center font-bold text-gray-700"
               >
                 Cancel
@@ -236,7 +332,8 @@ export default function NewGamePage({
                   creating ||
                   !opponent.trim() ||
                   selected.size === 0 ||
-                  players.length === 0
+                  players.length === 0 ||
+                  !seasonId
                 }
                 className="rounded-xl bg-gradient-to-r from-green-600 to-green-700 py-4 font-bold text-white shadow-lg disabled:opacity-50"
               >
