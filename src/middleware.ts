@@ -12,8 +12,10 @@ export const config = {
      * - _next/static (static files)
      * - _next/image (image optimization files)
      * - favicon.ico (favicon file)
+     * - overlay/ (public stream overlay; authorized by token, and streaming
+     *   software cannot carry a session cookie anyway)
      * - Any file with an extension (e.g., images)
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|overlay/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
