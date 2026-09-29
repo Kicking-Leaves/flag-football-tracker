@@ -16,13 +16,14 @@ import type {
   Team,
 } from "./types";
 import { seasonDisplayName } from "./types";
+import type { OverlayScoreboardRow } from "./scorebug";
 import { makeEmptyPlayerStats } from "./game-engine";
 
 const PLAYER_SELECT =
   "id, team_id, season_id, name, number, active, graduation_year, position_offense, position_defense, notes, created_at";
 
 const GAME_SELECT =
-  "id, team_id, season_id, opponent_name, game_date, status, result, game_data, created_at, updated_at";
+  "id, team_id, season_id, opponent_name, game_date, status, result, game_data, overlay_token, created_at, updated_at";
 
 const SEASON_SELECT = "id, team_id, year, term, is_active, created_at";
 
@@ -459,6 +460,48 @@ export async function deleteGame(
 ): Promise<void> {
   const { error } = await supabase.from("games").delete().eq("id", gameId);
   if (error) throw error;
+}
+
+// ---------- Public stream overlay ----------
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Read the narrow scoreboard projection for a public overlay token.
+ *
+ * Callable with the anon key: get_overlay_scoreboard is SECURITY DEFINER and
+ * the token match is the authorization check. Returns null for an unknown or
+ * malformed token so callers can 404 without leaking which games exist.
+ */
+export async function getOverlayScoreboard(
+  supabase: SupabaseClient,
+  token: string,
+): Promise<OverlayScoreboardRow | null> {
+  // Guard before the round trip: Postgres errors on an invalid uuid cast.
+  if (!UUID_RE.test(token)) return null;
+
+  const { data, error } = await supabase.rpc("get_overlay_scoreboard", {
+    p_token: token,
+  });
+  if (error) throw error;
+
+  const rows = (data ?? []) as OverlayScoreboardRow[];
+  return rows[0] ?? null;
+}
+
+/** Issue a fresh overlay token, invalidating any URL already handed out. */
+export async function rotateOverlayToken(
+  supabase: SupabaseClient,
+  gameId: string,
+): Promise<string> {
+  const token = crypto.randomUUID();
+  const { error } = await supabase
+    .from("games")
+    .update({ overlay_token: token })
+    .eq("id", gameId);
+  if (error) throw error;
+  return token;
 }
 
 // ---------- Per-player aggregation (pure — no Supabase call) ----------

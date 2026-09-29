@@ -89,6 +89,8 @@ export interface Game {
   status: GameStatus;
   result: GameResult | null;
   game_data: GameState;
+  /** Unguessable token granting read-only access to the public stream overlay. */
+  overlay_token?: string;
   created_at?: string;
   updated_at?: string;
 }
