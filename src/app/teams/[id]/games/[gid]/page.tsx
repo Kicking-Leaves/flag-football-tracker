@@ -32,6 +32,7 @@ export default async function GamePage({
       teamName={team.name}
       opponentName={game.opponent_name}
       gameDate={game.game_date}
+      overlayToken={game.overlay_token ?? null}
       initialState={game.game_data}
     />
   );
