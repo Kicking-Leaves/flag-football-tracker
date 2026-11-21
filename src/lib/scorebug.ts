@@ -72,11 +72,11 @@ export function ordinal(n: number): string {
 }
 
 /**
- * The field is 50 yards, so a first-down target past it is the end zone
- * rather than a yard line.
+ * The field is 50 yards, so a first-down target at the goal line is the end
+ * zone rather than a yard line.
  */
 export function firstDownTargetLabel(target: number): string {
-  return target >= 51 ? "END" : String(target);
+  return target >= 50 ? "END" : String(target);
 }
 
 export function periodLabel(

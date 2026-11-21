@@ -17,12 +17,12 @@ describe("ordinal", () => {
 
 describe("firstDownTargetLabel", () => {
   it("shows the yard line inside the field", () => {
-    expect(firstDownTargetLabel(35)).toBe("35");
-    expect(firstDownTargetLabel(50)).toBe("50");
+    expect(firstDownTargetLabel(17)).toBe("17");
+    expect(firstDownTargetLabel(33)).toBe("33");
   });
 
-  it("shows END once the target is past the goal line", () => {
-    expect(firstDownTargetLabel(51)).toBe("END");
+  it("shows END once the target is the goal line", () => {
+    expect(firstDownTargetLabel(50)).toBe("END");
     expect(firstDownTargetLabel(58)).toBe("END");
   });
 });

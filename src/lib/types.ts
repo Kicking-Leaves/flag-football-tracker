@@ -150,7 +150,7 @@ export interface TeamStats {
 /** A recorded play in a game. The pre-play snapshot is captured so undo works. */
 export interface Play {
   id: number;
-  playType: "pass" | "run" | "punt" | "penalty" | "point_after";
+  playType: "pass" | "run" | "punt" | "coverage_sack" | "penalty" | "point_after";
   possession?: Possession;
   yards: number;
   complete?: boolean;
@@ -158,6 +158,8 @@ export interface Play {
   touchdown?: boolean;
   turnover?: boolean;
   interception?: boolean;
+  /** Set when the interception was returned for a touchdown. */
+  interceptionReturnTD?: boolean;
   flagPull?: boolean;
   safety?: boolean;
   passDeflection?: boolean;
@@ -178,7 +180,7 @@ export interface Play {
   lossOfDown?: boolean;
 
   // Point-after / overtime conversion.
-  attempt?: 1 | 2;
+  attempt?: TryPoints;
   success?: boolean;
   points?: number;
   isPointAfter?: boolean;
@@ -237,7 +239,7 @@ export interface SeasonStats {
 
 export interface PlayData {
   possession: Possession;
-  playType: "pass" | "run" | "punt";
+  playType: "pass" | "run" | "punt" | "coverage_sack";
   yards: number;
   complete?: boolean;
   firstDown?: boolean;
@@ -254,8 +256,14 @@ export interface PlayData {
   defender?: string | null;
 }
 
+/**
+ * WIAA try options: 1pt (automatic after a TD; pass-only from the 5 in OT),
+ * 2pt from the 10, 3pt from the 17.
+ */
+export type TryPoints = 1 | 2 | 3;
+
 export interface PointAfterData {
-  type: 1 | 2;
+  type: TryPoints;
   success: boolean;
   playType?: "pass" | "run";
   passer?: string | null;
@@ -270,7 +278,7 @@ export interface PenaltyData {
 }
 
 export interface OTConversionData {
-  type: 1 | 2;
+  type: TryPoints;
   success: boolean;
 }
 

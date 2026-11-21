@@ -9,7 +9,14 @@ interface PlayEntryProps {
   onSubmit: (play: PlayData) => void;
 }
 
-type PlayType = "pass" | "run" | "punt";
+type PlayType = "pass" | "run" | "punt" | "coverage_sack";
+
+const PLAY_TYPES: { type: PlayType; label: string; active: string }[] = [
+  { type: "pass", label: "Pass", active: "bg-blue-500" },
+  { type: "run", label: "Run", active: "bg-green-500" },
+  { type: "punt", label: "Punt", active: "bg-orange-500" },
+  { type: "coverage_sack", label: "Cov. Sack", active: "bg-red-500" },
+];
 
 type Players = {
   passer: string;
@@ -74,6 +81,9 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOffense]);
 
+  // Punt and coverage sack carry no players, yards, or outcome flags.
+  const isSpecialPlay = playType === "punt" || playType === "coverage_sack";
+
   const sortedRoster = [...roster].sort(
     (a, b) =>
       Number(a.number) - Number(b.number) || a.name.localeCompare(b.name),
@@ -89,6 +99,16 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
         possession: state.possession,
         playType: "punt",
         isPunt: true,
+        yards: 0,
+      });
+      return;
+    }
+
+    if (playType === "coverage_sack") {
+      // WIAA 7-second count: ball back to the previous spot, down counts.
+      onSubmit({
+        possession: state.possession,
+        playType: "coverage_sack",
         yards: 0,
       });
       return;
@@ -138,30 +158,32 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
       {/* Play type */}
       <div className="rounded-2xl bg-white p-6 shadow-xl">
         <p className="mb-3 text-sm font-bold text-gray-600">PLAY TYPE</p>
-        <div className="grid grid-cols-3 gap-3">
-          {(["pass", "run", "punt"] as const).map((t) => (
+        <div className="grid grid-cols-4 gap-2">
+          {PLAY_TYPES.map((t) => (
             <button
-              key={t}
+              key={t.type}
               type="button"
-              onClick={() => setPlayType(t)}
-              className={`rounded-xl py-4 font-bold capitalize ${
-                playType === t
-                  ? t === "pass"
-                    ? "bg-blue-500 text-white"
-                    : t === "run"
-                      ? "bg-green-500 text-white"
-                      : "bg-orange-500 text-white"
+              onClick={() => setPlayType(t.type)}
+              className={`rounded-xl px-1 py-4 text-sm font-bold ${
+                playType === t.type
+                  ? `${t.active} text-white`
                   : "bg-gray-100 text-gray-700"
               }`}
             >
-              {t}
+              {t.label}
             </button>
           ))}
         </div>
+        {playType === "coverage_sack" && (
+          <p className="mt-3 text-sm text-gray-600">
+            No pass within the 7-second count. Ball returns to the previous
+            spot and the down counts.
+          </p>
+        )}
       </div>
 
       {/* Players */}
-      {playType !== "punt" && (
+      {!isSpecialPlay && (
         <div className="rounded-2xl bg-white p-6 shadow-xl">
           <p className="mb-3 text-sm font-bold text-gray-600">PLAYERS</p>
           {isOffense ? (
@@ -237,7 +259,7 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
       )}
 
       {/* Yards */}
-      {playType !== "punt" && (
+      {!isSpecialPlay && (
         <div className="rounded-2xl bg-white p-6 shadow-xl">
           <p className="mb-3 text-sm font-bold text-gray-600">YARDS</p>
           <div className="mb-4 flex items-center gap-2">
@@ -292,7 +314,7 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
       )}
 
       {/* Outcome flags */}
-      {playType !== "punt" && (
+      {!isSpecialPlay && (
         <div className="rounded-2xl bg-white p-6 shadow-xl">
           <p className="mb-3 text-sm font-bold text-gray-600">OUTCOME</p>
           <div className="grid grid-cols-2 gap-3">
@@ -411,7 +433,11 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
         onClick={handleSubmit}
         className="w-full rounded-2xl bg-blue-600 py-5 text-xl font-bold text-white shadow-2xl"
       >
-        {playType === "punt" ? "Record Punt" : "Record Play"}
+        {playType === "punt"
+          ? "Record Punt"
+          : playType === "coverage_sack"
+            ? "Record Coverage Sack"
+            : "Record Play"}
       </button>
     </div>
   );
