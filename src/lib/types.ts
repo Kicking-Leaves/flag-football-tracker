@@ -4,10 +4,32 @@
 
 // ---------- Persistent entities ----------
 
+/** A high school (or club) that groups a coach's teams, e.g. JV + Varsity. */
+export interface School {
+  id: string;
+  owner_id: string;
+  name: string;
+  created_at?: string;
+}
+
+/**
+ * One person at a school. Roster entries (`Player`) on any of the school's
+ * teams link here, so the same athlete on JV and Varsity is recognized as one.
+ */
+export interface Athlete {
+  id: string;
+  school_id: string;
+  name: string;
+  graduation_year?: number | null;
+  created_at?: string;
+}
+
 export interface Team {
   id: string;
   owner_id: string;
   name: string;
+  /** School this team belongs to; null if not assigned. */
+  school_id?: string | null;
   created_at?: string;
   player_count?: number;
 }
@@ -42,6 +64,8 @@ export function seasonDisplayName(
 export interface Player {
   id: string;
   team_id: string;
+  /** Shared athlete profile at the team's school; null if unlinked. */
+  athlete_id?: string | null;
   /** Null for legacy players created before seasons were introduced. */
   season_id?: string | null;
   name: string;
