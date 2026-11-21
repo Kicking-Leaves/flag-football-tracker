@@ -4,12 +4,14 @@ import { createClient } from "@/lib/supabase/server";
 import {
   computeSeasonStats,
   getGames,
+  getSchools,
   getSeasons,
   getTeam,
 } from "@/lib/db";
 import type { Season } from "@/lib/types";
 import NewSeasonForm from "./NewSeasonForm";
 import SeasonRowActions from "./SeasonRowActions";
+import SchoolPicker from "./SchoolPicker";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +30,10 @@ export default async function TeamDashboardPage({
   const team = await getTeam(supabase, id);
   if (!team) notFound();
 
-  const seasons = await getSeasons(supabase, id);
+  const [seasons, schools] = await Promise.all([
+    getSeasons(supabase, id),
+    getSchools(supabase),
+  ]);
 
   // For each season compute its record in parallel.
   const seasonCards = await Promise.all(
@@ -55,6 +60,12 @@ export default async function TeamDashboardPage({
             {seasons.length} {seasons.length === 1 ? "season" : "seasons"}
           </p>
         </div>
+
+        <SchoolPicker
+          teamId={id}
+          schools={schools}
+          currentSchoolId={team.school_id ?? null}
+        />
 
         <section className="mb-6">
           <div className="mb-4 flex items-center justify-between">

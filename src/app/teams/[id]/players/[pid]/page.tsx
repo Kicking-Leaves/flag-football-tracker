@@ -5,8 +5,11 @@ import {
   computePlayerSeasonStats,
   getGames,
   getPlayer,
+  getRosterEntriesForAthletes,
+  getSchool,
   getSeasons,
   getTeam,
+  type RosterEntryWithTeam,
 } from "@/lib/db";
 import type { Game, PlayerStats, Season } from "@/lib/types";
 import { makeEmptyPlayerStats } from "@/lib/game-engine";
@@ -29,6 +32,15 @@ function hasDefense(p: PlayerStats): boolean {
     p.defense.tacklesForLoss > 0 ||
     p.defense.passDeflections > 0
   );
+}
+
+function addStats(into: PlayerStats, from: PlayerStats): void {
+  for (const k of Object.keys(into.offense) as (keyof PlayerStats["offense"])[]) {
+    into.offense[k] += from.offense[k] ?? 0;
+  }
+  for (const k of Object.keys(into.defense) as (keyof PlayerStats["defense"])[]) {
+    into.defense[k] += from.defense[k] ?? 0;
+  }
 }
 
 /**
@@ -164,6 +176,42 @@ export default async function PlayerStatsPage({
   const seasonGamesPlayed = lines.filter((l) => l.stats !== null).length;
   const careerGamesPlayed = matchedGames.length;
 
+  // Same athlete on the school's other teams (e.g. JV and Varsity): per-entry
+  // stats plus a combined total. Attribution is by roster-entry id, exact.
+  const athleteEntries: RosterEntryWithTeam[] = player.athlete_id
+    ? await getRosterEntriesForAthletes(supabase, [player.athlete_id])
+    : [];
+  const onOtherTeams = athleteEntries.some((e) => e.team_id !== teamId);
+  const school =
+    onOtherTeams && team.school_id ? await getSchool(supabase, team.school_id) : null;
+  const schoolRows: { entry: RosterEntryWithTeam; total: PlayerStats; games: number }[] = [];
+  const schoolTotal = makeEmptyPlayerStats(player.name, player.number);
+  if (onOtherTeams) {
+    const gamesByTeam = new Map<string, Game[]>([[teamId, allGames]]);
+    for (const tid of new Set(athleteEntries.map((e) => e.team_id))) {
+      if (!gamesByTeam.has(tid)) gamesByTeam.set(tid, await getGames(supabase, tid));
+    }
+    for (const entry of athleteEntries) {
+      const games = (gamesByTeam.get(entry.team_id) ?? []).filter(
+        (g) => !entry.season_id || g.season_id === entry.season_id,
+      );
+      const { total, lines } = computePlayerSeasonStats(
+        games,
+        entry.id,
+        entry.name,
+        entry.number,
+      );
+      addStats(schoolTotal, total);
+      schoolRows.push({ entry, total, games: lines.filter((l) => l.stats).length });
+    }
+    schoolRows.sort(
+      (a, b) =>
+        (b.entry.season_name ?? "").localeCompare(a.entry.season_name ?? "") ||
+        a.entry.team_name.localeCompare(b.entry.team_name),
+    );
+  }
+  const schoolGames = schoolRows.reduce((n, r) => n + r.games, 0);
+
   const rosterBackHref = playerSeason
     ? `/teams/${teamId}/roster?season=${playerSeason.id}`
     : `/teams/${teamId}/roster`;
@@ -251,6 +299,50 @@ export default async function PlayerStatsPage({
             <StatGrid total={careerTotal} />
           )}
         </section>
+
+        {/* Combined across the school's teams (same athlete) */}
+        {onOtherTeams && (
+          <section className="mb-6 rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="mb-1 text-xl font-bold text-gray-800">
+              All {school?.name ?? "School"} Teams ({schoolGames}{" "}
+              {schoolGames === 1 ? "game" : "games"})
+            </h2>
+            <p className="mb-3 text-xs text-gray-500">
+              {player.name} on every team and season at the school.
+            </p>
+            <ul className="mb-4 space-y-1 text-sm">
+              {schoolRows.map(({ entry, games }) => (
+                <li key={entry.id} className="flex justify-between gap-3">
+                  {entry.id === player.id ? (
+                    <span className="font-semibold">
+                      {entry.team_name} #{entry.number}
+                      {entry.season_name ? ` · ${entry.season_name}` : ""} (this page)
+                    </span>
+                  ) : (
+                    <Link
+                      href={`/teams/${entry.team_id}/players/${entry.id}`}
+                      className="font-semibold text-blue-700 underline"
+                    >
+                      {entry.team_name} #{entry.number}
+                      {entry.season_name ? ` · ${entry.season_name}` : ""}
+                    </Link>
+                  )}
+                  <span className="flex-shrink-0 text-gray-500">
+                    {games} {games === 1 ? "game" : "games"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {hasPassing(schoolTotal) ||
+            hasRushing(schoolTotal) ||
+            hasReceiving(schoolTotal) ||
+            hasDefense(schoolTotal) ? (
+              <StatGrid total={schoolTotal} />
+            ) : (
+              <p className="text-sm text-gray-500">No stats yet.</p>
+            )}
+          </section>
+        )}
 
         {/* Per-season career breakdown */}
         {orderedBuckets.length > 1 && (
