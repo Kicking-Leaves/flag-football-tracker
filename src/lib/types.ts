@@ -169,6 +169,15 @@ export interface Play {
   rusher?: string | null;
   defender?: string | null;
 
+  /**
+   * When the scorer recorded this entry, as local wall-clock time with its UTC
+   * offset (e.g. "2026-11-21T19:04:32.120-08:00"). Used to line plays up with
+   * video. Absent on plays recorded before timestamps existed.
+   */
+  recordedAt?: string;
+  /** Period the play was recorded in. */
+  half?: 1 | 2 | "OT";
+
   // Pre-play snapshot (for undo + display).
   down: number;
   yardsToGo: number;

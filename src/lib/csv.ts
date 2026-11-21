@@ -4,7 +4,14 @@
 // includes the full set of stats from app.jsx (TFL, pass deflections, etc.)
 // and the season-export totals.
 
-import type { Game, GameState, PlayerStats, SeasonStats } from "./types";
+import type {
+  Game,
+  GameState,
+  Play,
+  PlayerStats,
+  Possession,
+  SeasonStats,
+} from "./types";
 
 type Row = (string | number)[];
 
@@ -128,6 +135,129 @@ export function generateGameCSV(
       ]),
     );
   }
+
+  return rowsToCsv(rows);
+}
+
+// ---------- Play-by-play CSV ----------
+
+function describePlayType(p: Play): string {
+  if (p.isOvertimeConversion) return `OT ${p.attempt ?? ""}-pt try`.trim();
+  if (p.isPointAfter) return p.attempt === 1 ? "PAT (automatic 1)" : `${p.attempt}-pt try`;
+  switch (p.playType) {
+    case "pass":
+      return "Pass";
+    case "run":
+      return "Run";
+    case "punt":
+      return "Punt";
+    case "coverage_sack":
+      return "Coverage sack";
+    case "penalty":
+      return "Penalty";
+    default:
+      return p.playType;
+  }
+}
+
+function describeResult(p: Play): string {
+  if (p.isPointAfter || p.isOvertimeConversion) {
+    return p.success ? "Good" : "No good";
+  }
+  if (p.playType === "penalty") {
+    const on = p.onOffense ? "on offense" : "on defense";
+    return p.lossOfDown ? `${on}, loss of down` : on;
+  }
+  const parts: string[] = [];
+  if (p.playType === "pass") parts.push(p.complete ? "Complete" : "Incomplete");
+  if (p.interception) parts.push(p.interceptionReturnTD ? "Interception (returned for TD)" : "Interception");
+  if (p.touchdown) parts.push("Touchdown");
+  if (p.safety) parts.push("Safety");
+  if (p.firstDown && !p.touchdown) parts.push("First down");
+  if (p.flagPull) parts.push("Flag pull");
+  if (p.passDeflection) parts.push("Pass deflection");
+  return parts.join("; ");
+}
+
+/**
+ * One row per recorded entry (plays, penalties, tries) in the order they were
+ * recorded, with the scorer's wall-clock time for lining up against video.
+ * Down / To Go / Ball On are the situation before the snap, except penalty
+ * rows, which carry the situation after enforcement.
+ */
+export function generatePlayByPlayCSV(
+  game: Pick<Game, "opponent_name"> & { teamName?: string; game_data: GameState },
+): string {
+  const gd = game.game_data;
+  const teamName = game.teamName ?? gd.teamName ?? "Team";
+  const opponent = game.opponent_name ?? gd.opponentName ?? "Opponent";
+  const players = gd.playerStats ?? {};
+  const who = (id?: string | null) => {
+    if (!id) return "";
+    const p = players[id];
+    return p ? playerLabel(p) : "";
+  };
+
+  const nameOf = (side?: Possession) =>
+    side === "team" ? teamName : side === "opponent" ? opponent : "";
+  const other = (side?: Possession): Possession | undefined =>
+    side === "team" ? "opponent" : side === "opponent" ? "team" : undefined;
+  /** Who scored on this entry and how much, e.g. "Eagles +6". */
+  const scoring = (p: Play): string => {
+    const parts: string[] = [];
+    const add = (side: Possession | undefined, pts: number) => {
+      if (side && pts) parts.push(`${nameOf(side)} +${pts}`);
+    };
+    if (p.isPointAfter || p.isOvertimeConversion) add(p.possession, p.points ?? 0);
+    if (p.touchdown) add(p.possession, 6);
+    if (p.safety) add(other(p.possession), 2);
+    if (p.interceptionReturnTD) add(other(p.possession), 6);
+    return parts.join("; ");
+  };
+
+  const rows: Row[] = [
+    [
+      "#",
+      "Recorded At",
+      "Clock Time",
+      "Half",
+      "Offense",
+      "Down",
+      "To Go",
+      "Ball On",
+      "Type",
+      "Yards",
+      "Result",
+      "Scoring",
+      "Passer",
+      "Receiver",
+      "Rusher",
+      "Defender",
+    ],
+  ];
+
+  gd.plays.forEach((p, i) => {
+    const isTry = p.isPointAfter || p.isOvertimeConversion;
+    rows.push([
+      i + 1,
+      p.recordedAt ?? "",
+      // "2026-11-21T19:04:32.120-08:00" → "19:04:32"
+      p.recordedAt ? p.recordedAt.slice(11, 19) : "",
+      p.half === "OT" ? "OT" : p.half ? String(p.half) : "",
+      nameOf(p.possession),
+      isTry ? "" : p.down || "",
+      isTry ? "" : p.yardsToGo ?? "",
+      p.lineOfScrimmage ?? "",
+      describePlayType(p),
+      isTry ? "" : p.yards,
+      describeResult(p),
+      scoring(p),
+      who(p.passer),
+      who(p.receiver),
+      who(p.rusher),
+      who(p.defender),
+    ]);
+  });
 
   return rowsToCsv(rows);
 }

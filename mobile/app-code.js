@@ -514,6 +514,18 @@ export default function FlagFootballTrackerV4() {
   // 2pt from the 10, 3pt from the 17.
   const TRY_SPOT = { 1: 5, 2: 10, 3: 17 };
 
+  // Local wall-clock time with UTC offset, e.g. "2026-11-21T19:04:32.120-08:00",
+  // stamped on every recorded play so plays can be lined up with video.
+  const localIsoTimestamp = (date = new Date()) => {
+    const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, '0');
+    const offsetMin = -date.getTimezoneOffset();
+    const sign = offsetMin >= 0 ? '+' : '-';
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+      `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+      `.${pad(date.getMilliseconds(), 3)}${sign}${pad(Math.trunc(offsetMin / 60))}:${pad(offsetMin % 60)}`;
+  };
+  const recordMeta = (g) => ({ recordedAt: localIsoTimestamp(), half: g.half });
+
   const calculateYardsToFirstDown = (los, currentTarget) => {
     // If we have a current target and haven't crossed it yet, use it
     if (currentTarget && los < currentTarget) {
@@ -550,7 +562,7 @@ export default function FlagFootballTrackerV4() {
       firstDownTarget: g.firstDownTarget
     };
     
-    const play = { id: Date.now(), ...playData, ...stateBeforePlay };
+    const play = { id: Date.now(), ...playData, ...stateBeforePlay, ...recordMeta(g) };
     g.plays.push(play);
     
     // Update team stats and player stats
@@ -706,7 +718,7 @@ export default function FlagFootballTrackerV4() {
         else g.score.opponent += pointAfterType;
       }
       // Record the try so undo can reverse it.
-      g.plays.push({ id: Date.now(), playType: 'point_after', isPointAfter: true, possession: g.possession, attempt: pointAfterType, success, points: success ? pointAfterType : 0, yards: 0, down: 0, yardsToGo: 0, lineOfScrimmage: TRY_SPOT[pointAfterType] });
+      g.plays.push({ ...recordMeta(g), id: Date.now(), playType: 'point_after', isPointAfter: true, possession: g.possession, attempt: pointAfterType, success, points: success ? pointAfterType : 0, yards: 0, down: 0, yardsToGo: 0, lineOfScrimmage: TRY_SPOT[pointAfterType] });
       g.possession = g.possession === 'team' ? 'opponent' : 'team';
       g.down = 1; g.lineOfScrimmage = 5; g.yardsToGo = 12; g.firstDownTarget = 17;
       setCurrentGame(g); saveGame(g);
@@ -719,6 +731,7 @@ export default function FlagFootballTrackerV4() {
     } else if (gameMode === 'penalty') {
       // Handle penalty
       const g = { ...currentGame };
+      const offense = g.possession; // before a 4th-down loss of down flips it
       const penaltyAmount = penaltyOnOffense ? -penaltyYards : penaltyYards;
       const newLOS = Math.max(0, Math.min(50, g.lineOfScrimmage + penaltyAmount));
       g.lineOfScrimmage = newLOS;
@@ -741,8 +754,10 @@ export default function FlagFootballTrackerV4() {
       // Else replay down (no change to down number)
       
       g.plays.push({ 
+        ...recordMeta(g),
         id: Date.now(), 
         playType: 'penalty', 
+        possession: offense,
         yards: penaltyAmount, 
         onOffense: penaltyOnOffense, 
         lossOfDown: penaltyLossOfDown,
@@ -990,7 +1005,7 @@ export default function FlagFootballTrackerV4() {
     const plays = g.plays.filter(p => p.isOvertimeConversion && p.overtimeRound === g.overtimeRound);
     const teamDone = plays.some(p => p.possession === 'team') || g.possession === 'team';
     const oppDone = plays.some(p => p.possession === 'opponent') || g.possession === 'opponent';
-    g.plays.push({ id: Date.now(), playType: 'point_after', isOvertimeConversion: true, overtimeRound: g.overtimeRound, possession: g.possession, attempt: otConversionType, success, points: success ? otConversionType : 0, yards: 0, down: 0, yardsToGo: 0, lineOfScrimmage: TRY_SPOT[otConversionType] });
+    g.plays.push({ ...recordMeta(g), id: Date.now(), playType: 'point_after', isOvertimeConversion: true, overtimeRound: g.overtimeRound, possession: g.possession, attempt: otConversionType, success, points: success ? otConversionType : 0, yards: 0, down: 0, yardsToGo: 0, lineOfScrimmage: TRY_SPOT[otConversionType] });
     if (teamDone && oppDone) {
       if (g.score.team !== g.score.opponent) { alert(`Game Over! Final: ${g.teamName} ${g.score.team} - ${g.opponentName} ${g.score.opponent} (OT)`); delete g.awaitingOvertimeConversion; setCurrentGame(g); saveGame(g); setView('stats'); return; }
       else { g.overtimeRound++; g.possession = g.overtimeFirstOffense; }

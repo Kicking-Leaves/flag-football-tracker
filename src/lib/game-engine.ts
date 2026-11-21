@@ -144,6 +144,29 @@ export function getFirstDownTargetLine(
 
 // ---------- Utilities ----------
 
+/**
+ * ISO 8601 timestamp in the device's local time with its UTC offset, e.g.
+ * "2026-11-21T19:04:32.120-08:00". Keeping the offset (rather than UTC) means
+ * the scorer's wall-clock time survives even when exports are built on a
+ * server in another time zone.
+ */
+export function localIsoTimestamp(date: Date = new Date()): string {
+  const pad = (n: number, w = 2) => String(Math.abs(n)).padStart(w, "0");
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `.${pad(date.getMilliseconds(), 3)}` +
+    `${sign}${pad(Math.trunc(offsetMin / 60))}:${pad(offsetMin % 60)}`
+  );
+}
+
+/** Recording metadata stamped on every play row. */
+function recordMeta(g: GameState): Pick<Play, "recordedAt" | "half"> {
+  return { recordedAt: localIsoTimestamp(), half: g.half };
+}
+
 function clone<T>(state: T): T {
   // structuredClone is available in Node 18+ / all modern browsers.
   return structuredClone(state);
@@ -174,6 +197,7 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
     id: Date.now(),
     ...playData,
     ...stateBeforePlay,
+    ...recordMeta(g),
   };
   g.plays.push(play);
 
@@ -329,6 +353,7 @@ export function recordPointAfter(state: GameState, data: PointAfterData): GameSt
   }
 
   g.plays.push({
+    ...recordMeta(g),
     id: Date.now(),
     playType: "point_after",
     possession: g.possession,
@@ -360,6 +385,8 @@ export function recordPointAfter(state: GameState, data: PointAfterData): GameSt
  */
 export function recordPenalty(state: GameState, data: PenaltyData): GameState {
   const g = clone(state);
+  // Offense at the time of the foul (a loss of down on 4th can flip it below).
+  const offense = g.possession;
   const penaltyAmount = data.onOffense ? -data.yards : data.yards;
   const newLOS = Math.max(FIELD_MIN, Math.min(FIELD_MAX, g.lineOfScrimmage + penaltyAmount));
   g.lineOfScrimmage = newLOS;
@@ -380,8 +407,10 @@ export function recordPenalty(state: GameState, data: PenaltyData): GameState {
   // Else replay the down (no change to down number).
 
   g.plays.push({
+    ...recordMeta(g),
     id: Date.now(),
     playType: "penalty",
+    possession: offense,
     yards: penaltyAmount,
     onOffense: data.onOffense,
     lossOfDown: data.lossOfDown,
@@ -469,6 +498,7 @@ export function handleOvertimeConversion(
   }
 
   g.plays.push({
+    ...recordMeta(g),
     id: Date.now(),
     playType: "point_after",
     possession: g.possession,
