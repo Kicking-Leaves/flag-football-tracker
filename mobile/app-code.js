@@ -510,15 +510,32 @@ export default function FlagFootballTrackerV4() {
   };
 
   // Game functions
+  // WIAA try spots: 1pt from the 5 (automatic after a TD; pass-only in OT),
+  // 2pt from the 10, 3pt from the 17.
+  const TRY_SPOT = { 1: 5, 2: 10, 3: 17 };
+
+  // Local wall-clock time with UTC offset, e.g. "2026-11-21T19:04:32.120-08:00",
+  // stamped on every recorded play so plays can be lined up with video.
+  const localIsoTimestamp = (date = new Date()) => {
+    const pad = (n, w = 2) => String(Math.abs(n)).padStart(w, '0');
+    const offsetMin = -date.getTimezoneOffset();
+    const sign = offsetMin >= 0 ? '+' : '-';
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+      `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+      `.${pad(date.getMilliseconds(), 3)}${sign}${pad(Math.trunc(offsetMin / 60))}:${pad(offsetMin % 60)}`;
+  };
+  const recordMeta = (g) => ({ recordedAt: localIsoTimestamp(), half: g.half });
+
   const calculateYardsToFirstDown = (los, currentTarget) => {
     // If we have a current target and haven't crossed it yet, use it
     if (currentTarget && los < currentTarget) {
       return currentTarget - los;
     }
     // Otherwise calculate new target
-    if (los >= 51) return 0;
-    if (los >= 34) return 51 - los;
-    if (los >= 17) return 34 - los;
+    // WIAA: 50-yard field; zones to gain 17 yards from each end zone (17, 33).
+    if (los >= 50) return 0;
+    if (los >= 33) return 50 - los;
+    if (los >= 17) return 33 - los;
     return 17 - los;
   };
 
@@ -529,8 +546,8 @@ export default function FlagFootballTrackerV4() {
       return currentTarget;
     }
     // Otherwise calculate new target based on position
-    if (los >= 34) return 51;
-    if (los >= 17) return 34;
+    if (los >= 33) return 50;
+    if (los >= 17) return 33;
     return 17;
   };
 
@@ -545,7 +562,8 @@ export default function FlagFootballTrackerV4() {
       firstDownTarget: g.firstDownTarget
     };
     
-    g.plays.push({ id: Date.now(), ...playData, ...stateBeforePlay });
+    const play = { id: Date.now(), ...playData, ...stateBeforePlay, ...recordMeta(g) };
+    g.plays.push(play);
     
     // Update team stats and player stats
     if (playData.possession === 'team') {
@@ -584,6 +602,9 @@ export default function FlagFootballTrackerV4() {
           g.playerStats[playData.rusher].offense.rushingYards += playData.yards;
           if (playData.touchdown) g.playerStats[playData.rusher].offense.touchdowns++;
         }
+      } else if (playData.playType === 'coverage_sack') {
+        // WIAA 7-second count expired: no yards, no player stats, down counts.
+        g.stats.offense.totalPlays++;
       }
       if (playData.firstDown) g.stats.offense.firstDowns++;
       if (playData.touchdown) { g.stats.offense.touchdowns++; g.score.team += 6; }
@@ -648,7 +669,7 @@ export default function FlagFootballTrackerV4() {
     
     // Update field position
     const newLOS = g.lineOfScrimmage + playData.yards;
-    g.lineOfScrimmage = Math.max(0, Math.min(51, newLOS));
+    g.lineOfScrimmage = Math.max(0, Math.min(50, newLOS));
     
     // Get or preserve the current first down target
     const currentTarget = g.firstDownTarget || getFirstDownTargetLine(g.lineOfScrimmage, null);
@@ -660,6 +681,8 @@ export default function FlagFootballTrackerV4() {
       g.firstDownTarget = getFirstDownTargetLine(g.lineOfScrimmage, null);
       g.yardsToGo = calculateYardsToFirstDown(g.lineOfScrimmage, g.firstDownTarget);
       if (!playData.firstDown) g.stats.offense.firstDowns++;
+      // Mark the play so undo reverses an auto-detected first down too.
+      play.firstDown = true;
     } else {
       // Didn't get first down - keep same target
       g.down++;
@@ -689,10 +712,13 @@ export default function FlagFootballTrackerV4() {
   const recordPlay = () => {
     if (gameMode === 'pointAfter') {
       const g = { ...currentGame };
-      if (pointAfterSuccess) {
+      const success = pointAfterType === 1 ? true : pointAfterSuccess;
+      if (success) {
         if (g.possession === 'team') g.score.team += pointAfterType;
         else g.score.opponent += pointAfterType;
       }
+      // Record the try so undo can reverse it.
+      g.plays.push({ ...recordMeta(g), id: Date.now(), playType: 'point_after', isPointAfter: true, possession: g.possession, attempt: pointAfterType, success, points: success ? pointAfterType : 0, yards: 0, down: 0, yardsToGo: 0, lineOfScrimmage: TRY_SPOT[pointAfterType] });
       g.possession = g.possession === 'team' ? 'opponent' : 'team';
       g.down = 1; g.lineOfScrimmage = 5; g.yardsToGo = 12; g.firstDownTarget = 17;
       setCurrentGame(g); saveGame(g);
@@ -705,8 +731,9 @@ export default function FlagFootballTrackerV4() {
     } else if (gameMode === 'penalty') {
       // Handle penalty
       const g = { ...currentGame };
+      const offense = g.possession; // before a 4th-down loss of down flips it
       const penaltyAmount = penaltyOnOffense ? -penaltyYards : penaltyYards;
-      const newLOS = Math.max(0, Math.min(51, g.lineOfScrimmage + penaltyAmount));
+      const newLOS = Math.max(0, Math.min(50, g.lineOfScrimmage + penaltyAmount));
       g.lineOfScrimmage = newLOS;
       
       // Preserve the first down target - don't recalculate
@@ -727,8 +754,10 @@ export default function FlagFootballTrackerV4() {
       // Else replay down (no change to down number)
       
       g.plays.push({ 
+        ...recordMeta(g),
         id: Date.now(), 
         playType: 'penalty', 
+        possession: offense,
         yards: penaltyAmount, 
         onOffense: penaltyOnOffense, 
         lossOfDown: penaltyLossOfDown,
@@ -744,6 +773,9 @@ export default function FlagFootballTrackerV4() {
       setPenaltyLossOfDown(false);
     } else if (playType === 'punt') {
       addPlay({ possession: currentGame.possession, playType: 'punt', isPunt: true, yards: 0 });
+    } else if (playType === 'coverage_sack') {
+      // WIAA 7-second count: ball back to the previous spot, down counts.
+      addPlay({ possession: currentGame.possession, playType: 'coverage_sack', yards: 0 });
     } else {
       // Auto-detect first down if yards gained >= yardsToGo
       const autoFirstDown = yards >= currentGame.yardsToGo && currentGame.yardsToGo > 0;
@@ -798,8 +830,12 @@ export default function FlagFootballTrackerV4() {
     delete g.awaitingInterceptionInfo;
     g.possession = g.interceptionTeam;
     delete g.interceptionTeam;
-    if (isTD) { if (g.possession === 'team') g.score.team += 6; else g.score.opponent += 6; }
-    else { g.down = 1; g.lineOfScrimmage = fieldPos; g.yardsToGo = calculateYardsToFirstDown(fieldPos); }
+    if (isTD) {
+      if (g.possession === 'team') g.score.team += 6; else g.score.opponent += 6;
+      const intPlay = g.plays[g.plays.length - 1];
+      if (intPlay && intPlay.interception) intPlay.interceptionReturnTD = true;
+    }
+    else { g.down = 1; g.lineOfScrimmage = fieldPos; g.firstDownTarget = getFirstDownTargetLine(fieldPos, null); g.yardsToGo = calculateYardsToFirstDown(fieldPos, g.firstDownTarget); }
     setCurrentGame(g); saveGame(g);
   };
 
@@ -969,7 +1005,7 @@ export default function FlagFootballTrackerV4() {
     const plays = g.plays.filter(p => p.isOvertimeConversion && p.overtimeRound === g.overtimeRound);
     const teamDone = plays.some(p => p.possession === 'team') || g.possession === 'team';
     const oppDone = plays.some(p => p.possession === 'opponent') || g.possession === 'opponent';
-    g.plays.push({ id: Date.now(), isOvertimeConversion: true, overtimeRound: g.overtimeRound, possession: g.possession, success, points: success ? otConversionType : 0 });
+    g.plays.push({ ...recordMeta(g), id: Date.now(), playType: 'point_after', isOvertimeConversion: true, overtimeRound: g.overtimeRound, possession: g.possession, attempt: otConversionType, success, points: success ? otConversionType : 0, yards: 0, down: 0, yardsToGo: 0, lineOfScrimmage: TRY_SPOT[otConversionType] });
     if (teamDone && oppDone) {
       if (g.score.team !== g.score.opponent) { alert(`Game Over! Final: ${g.teamName} ${g.score.team} - ${g.opponentName} ${g.score.opponent} (OT)`); delete g.awaitingOvertimeConversion; setCurrentGame(g); saveGame(g); setView('stats'); return; }
       else { g.overtimeRound++; g.possession = g.overtimeFirstOffense; }
@@ -1093,8 +1129,45 @@ export default function FlagFootballTrackerV4() {
       return;
     }
     
+    // Tries (after a TD, or in OT): take the points back and return to the
+    // "awaiting try" state for the same team.
+    if (lastPlay.isPointAfter || lastPlay.isOvertimeConversion) {
+      g.plays.pop();
+      const scorer = lastPlay.possession || (g.possession === 'team' ? 'opponent' : 'team');
+      const pts = lastPlay.points || 0;
+      if (scorer === 'team') g.score.team = Math.max(0, g.score.team - pts);
+      else g.score.opponent = Math.max(0, g.score.opponent - pts);
+      g.possession = scorer;
+      if (lastPlay.isOvertimeConversion) {
+        g.overtimeRound = lastPlay.overtimeRound || g.overtimeRound;
+        g.awaitingOvertimeConversion = true;
+        g.completed = false;
+        delete g.result;
+      } else {
+        // Back to just after the scoring play, which left the field state put.
+        const scoringPlay = g.plays[g.plays.length - 1];
+        if (scoringPlay) {
+          g.down = scoringPlay.down || 1;
+          g.yardsToGo = scoringPlay.yardsToGo;
+          g.lineOfScrimmage = scoringPlay.lineOfScrimmage;
+          if (scoringPlay.firstDownTarget) g.firstDownTarget = scoringPlay.firstDownTarget;
+        }
+        setGameMode('pointAfter');
+      }
+      setCurrentGame(g);
+      saveGame(g);
+      return;
+    }
+    
     // Remove the play
     g.plays.pop();
+    
+    // Possession goes back to whoever had the ball for this snap — punts,
+    // safeties, turnovers on downs, and interceptions all flip it.
+    if (lastPlay.possession) g.possession = lastPlay.possession;
+    delete g.awaitingInterceptionInfo;
+    delete g.interceptionTeam;
+    if (lastPlay.touchdown) setGameMode('normal');
     
     // Find the previous play to restore state from
     const prevPlay = g.plays.length > 0 ? g.plays[g.plays.length - 1] : null;
@@ -1139,6 +1212,8 @@ export default function FlagFootballTrackerV4() {
         g.playerStats[lastPlay.receiver].offense.receptions = Math.max(0, g.playerStats[lastPlay.receiver].offense.receptions - 1);
         g.playerStats[lastPlay.receiver].offense.receivingYards = Math.max(0, g.playerStats[lastPlay.receiver].offense.receivingYards - lastPlay.yards);
       }
+    } else if (lastPlay.playType === 'coverage_sack' && lastPlay.possession === 'team') {
+      g.stats.offense.totalPlays = Math.max(0, g.stats.offense.totalPlays - 1);
     } else if (lastPlay.playType === 'run' && lastPlay.possession === 'team') {
       g.stats.offense.rushAttempts = Math.max(0, g.stats.offense.rushAttempts - 1);
       g.stats.offense.rushingYards = Math.max(0, g.stats.offense.rushingYards - lastPlay.yards);
@@ -1159,6 +1234,27 @@ export default function FlagFootballTrackerV4() {
         if (lastPlay.rusher && g.playerStats[lastPlay.rusher]) g.playerStats[lastPlay.rusher].offense.touchdowns = Math.max(0, g.playerStats[lastPlay.rusher].offense.touchdowns - 1);
       } else {
         g.score.opponent = Math.max(0, g.score.opponent - 6);
+      }
+    }
+    
+    // Safety scored 2 for the defense
+    if (lastPlay.safety) {
+      if (lastPlay.possession === 'team') g.score.opponent = Math.max(0, g.score.opponent - 2);
+      else g.score.team = Math.max(0, g.score.team - 2);
+    }
+    
+    // Pick-six scored 6 for the defense
+    if (lastPlay.interceptionReturnTD) {
+      if (lastPlay.possession === 'team') g.score.opponent = Math.max(0, g.score.opponent - 6);
+      else g.score.team = Math.max(0, g.score.team - 6);
+    }
+    
+    // Forced punts / turnovers on downs credited to our defense
+    if (lastPlay.possession === 'opponent') {
+      if (lastPlay.playType === 'punt' || lastPlay.isPunt) {
+        g.stats.defense.forcedPunts = Math.max(0, (g.stats.defense.forcedPunts || 0) - 1);
+      } else if (lastPlay.down === 4 && !lastPlay.firstDown && !lastPlay.touchdown && !lastPlay.interception && !lastPlay.safety) {
+        g.stats.defense.turnoversOnDowns = Math.max(0, (g.stats.defense.turnoversOnDowns || 0) - 1);
       }
     }
     
@@ -1191,7 +1287,7 @@ export default function FlagFootballTrackerV4() {
   const getFirstDownTarget = () => {
     if (!currentGame) return '';
     const target = currentGame.firstDownTarget || getFirstDownTargetLine(currentGame.lineOfScrimmage, null);
-    if (target === 51) return 'END';
+    if (target >= 50) return 'END';
     return target.toString();
   };
 
@@ -1365,8 +1461,8 @@ export default function FlagFootballTrackerV4() {
                     <label className="block text-sm font-bold mb-3">Starting Field Position</label>
                     <div className="flex gap-3 mb-3">
                       <button onClick={() => setInterceptionFieldPos(Math.max(0, interceptionFieldPos - 5))} className="bg-gray-300 px-4 py-2 rounded-lg font-bold">-5</button>
-                      <input type="number" value={interceptionFieldPos} onChange={(e) => setInterceptionFieldPos(Math.max(0, Math.min(51, parseInt(e.target.value) || 0)))} className="flex-1 border-2 rounded-xl px-4 py-3 text-center text-2xl font-bold" />
-                      <button onClick={() => setInterceptionFieldPos(Math.min(51, interceptionFieldPos + 5))} className="bg-gray-300 px-4 py-2 rounded-lg font-bold">+5</button>
+                      <input type="number" value={interceptionFieldPos} onChange={(e) => setInterceptionFieldPos(Math.max(0, Math.min(50, parseInt(e.target.value) || 0)))} className="flex-1 border-2 rounded-xl px-4 py-3 text-center text-2xl font-bold" />
+                      <button onClick={() => setInterceptionFieldPos(Math.min(50, interceptionFieldPos + 5))} className="bg-gray-300 px-4 py-2 rounded-lg font-bold">+5</button>
                     </div>
                   </div>
                 )}
@@ -1523,9 +1619,10 @@ export default function FlagFootballTrackerV4() {
               <h3 className="text-2xl font-bold mb-2 text-center">⚡ OT Round {currentGame.overtimeRound} ⚡</h3>
               <p className="text-center mb-4">{currentGame.possession === 'team' ? currentGame.teamName : currentGame.opponentName} on Offense</p>
               <div className="bg-white rounded-xl p-4 mb-4 text-gray-800">
-                <div className="grid grid-cols-2 gap-3 mb-4">
-                  <button onClick={() => setOtConversionType(1)} className={`py-4 rounded-xl font-bold ${otConversionType === 1 ? 'bg-yellow-500 text-white' : 'bg-gray-100'}`}>1-Point</button>
-                  <button onClick={() => setOtConversionType(2)} className={`py-4 rounded-xl font-bold ${otConversionType === 2 ? 'bg-green-500 text-white' : 'bg-gray-100'}`}>2-Point</button>
+                <div className="grid grid-cols-3 gap-3 mb-4">
+                  <button onClick={() => setOtConversionType(1)} className={`py-3 rounded-xl font-bold leading-tight ${otConversionType === 1 ? 'bg-yellow-500 text-white' : 'bg-gray-100'}`}>1-Point<span className="block text-xs font-semibold opacity-80">from 5 (pass)</span></button>
+                  <button onClick={() => setOtConversionType(2)} className={`py-3 rounded-xl font-bold leading-tight ${otConversionType === 2 ? 'bg-green-500 text-white' : 'bg-gray-100'}`}>2-Point<span className="block text-xs font-semibold opacity-80">from 10</span></button>
+                  <button onClick={() => setOtConversionType(3)} className={`py-3 rounded-xl font-bold leading-tight ${otConversionType === 3 ? 'bg-blue-500 text-white' : 'bg-gray-100'}`}>3-Point<span className="block text-xs font-semibold opacity-80">from 17</span></button>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <button onClick={() => setOtConversionSuccess(true)} className={`py-3 rounded-xl font-bold ${otConversionSuccess ? 'bg-green-600 text-white' : 'bg-gray-100'}`}>✓ Success</button>
@@ -1550,15 +1647,19 @@ export default function FlagFootballTrackerV4() {
                   {/* Play Type */}
                   <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                     <p className="text-sm font-bold text-gray-600 mb-3">PLAY TYPE</p>
-                    <div className="grid grid-cols-3 gap-3">
-                      <button onClick={() => setPlayType('pass')} className={`py-4 rounded-xl font-bold ${playType === 'pass' ? 'bg-blue-500 text-white' : 'bg-gray-100'}`}>Pass</button>
-                      <button onClick={() => setPlayType('run')} className={`py-4 rounded-xl font-bold ${playType === 'run' ? 'bg-green-500 text-white' : 'bg-gray-100'}`}>Run</button>
-                      <button onClick={() => setPlayType('punt')} className={`py-4 rounded-xl font-bold ${playType === 'punt' ? 'bg-orange-500 text-white' : 'bg-gray-100'}`}>Punt</button>
+                    <div className="grid grid-cols-4 gap-2">
+                      <button onClick={() => setPlayType('pass')} className={`py-4 px-1 rounded-xl text-sm font-bold ${playType === 'pass' ? 'bg-blue-500 text-white' : 'bg-gray-100'}`}>Pass</button>
+                      <button onClick={() => setPlayType('run')} className={`py-4 px-1 rounded-xl text-sm font-bold ${playType === 'run' ? 'bg-green-500 text-white' : 'bg-gray-100'}`}>Run</button>
+                      <button onClick={() => setPlayType('punt')} className={`py-4 px-1 rounded-xl text-sm font-bold ${playType === 'punt' ? 'bg-orange-500 text-white' : 'bg-gray-100'}`}>Punt</button>
+                      <button onClick={() => setPlayType('coverage_sack')} className={`py-4 px-1 rounded-xl text-sm font-bold ${playType === 'coverage_sack' ? 'bg-red-500 text-white' : 'bg-gray-100'}`}>Cov. Sack</button>
                     </div>
+                    {playType === 'coverage_sack' && (
+                      <p className="mt-3 text-sm text-gray-600">No pass within the 7-second count. Ball returns to the previous spot and the down counts.</p>
+                    )}
                   </div>
 
                   {/* Players */}
-                  {playType !== 'punt' && (
+                  {playType !== 'punt' && playType !== 'coverage_sack' && (
                     <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                       <p className="text-sm font-bold text-gray-600 mb-3">PLAYERS</p>
                       {isOffense ? (
@@ -1594,7 +1695,7 @@ export default function FlagFootballTrackerV4() {
                   )}
 
                   {/* Yards */}
-                  {playType !== 'punt' && (
+                  {playType !== 'punt' && playType !== 'coverage_sack' && (
                     <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                       <p className="text-sm font-bold text-gray-600 mb-3">YARDS</p>
                       <div className="flex gap-3 mb-4">
@@ -1611,7 +1712,7 @@ export default function FlagFootballTrackerV4() {
                   )}
 
                   {/* Outcome Flags */}
-                  {playType !== 'punt' && (
+                  {playType !== 'punt' && playType !== 'coverage_sack' && (
                     <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                       <p className="text-sm font-bold text-gray-600 mb-3">OUTCOME</p>
                       <div className="grid grid-cols-2 gap-3">
@@ -1631,11 +1732,12 @@ export default function FlagFootballTrackerV4() {
               ) : gameMode === 'pointAfter' ? (
                 <div className="bg-white rounded-2xl shadow-xl p-6 mb-4">
                   <p className="text-sm font-bold text-gray-600 mb-3">POINT AFTER</p>
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    <button onClick={() => setPointAfterType(1)} className={`py-4 rounded-xl font-bold ${pointAfterType === 1 ? 'bg-yellow-500 text-white' : 'bg-gray-100'}`}>1-Point Kick</button>
-                    <button onClick={() => setPointAfterType(2)} className={`py-4 rounded-xl font-bold ${pointAfterType === 2 ? 'bg-green-500 text-white' : 'bg-gray-100'}`}>2-Point Try</button>
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <button onClick={() => setPointAfterType(1)} className={`py-3 rounded-xl font-bold leading-tight ${pointAfterType === 1 ? 'bg-yellow-500 text-white' : 'bg-gray-100'}`}>1-Point<span className="block text-xs font-semibold opacity-80">Automatic</span></button>
+                    <button onClick={() => setPointAfterType(2)} className={`py-3 rounded-xl font-bold leading-tight ${pointAfterType === 2 ? 'bg-green-500 text-white' : 'bg-gray-100'}`}>2-Point<span className="block text-xs font-semibold opacity-80">from the 10</span></button>
+                    <button onClick={() => setPointAfterType(3)} className={`py-3 rounded-xl font-bold leading-tight ${pointAfterType === 3 ? 'bg-blue-500 text-white' : 'bg-gray-100'}`}>3-Point<span className="block text-xs font-semibold opacity-80">from the 17</span></button>
                   </div>
-                  {pointAfterType === 2 && (
+                  {pointAfterType !== 1 && (
                     <div className="grid grid-cols-2 gap-3">
                       <button onClick={() => setPointAfterSuccess(true)} className={`py-3 rounded-xl font-bold ${pointAfterSuccess ? 'bg-green-600 text-white' : 'bg-gray-100'}`}>✓ Success</button>
                       <button onClick={() => setPointAfterSuccess(false)} className={`py-3 rounded-xl font-bold ${!pointAfterSuccess ? 'bg-red-600 text-white' : 'bg-gray-100'}`}>✗ Failed</button>
@@ -1675,7 +1777,7 @@ export default function FlagFootballTrackerV4() {
 
               {/* Record Button */}
               <button onClick={recordPlay} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-bold text-xl shadow-2xl mb-4">
-                {gameMode === 'pointAfter' ? '🏈 Record Point After' : gameMode === 'penalty' ? '🚩 Record Penalty' : playType === 'punt' ? '👟 Punt' : '✓ Record Play'}
+                {gameMode === 'pointAfter' ? '🏈 Record Point After' : gameMode === 'penalty' ? '🚩 Record Penalty' : playType === 'punt' ? '👟 Punt' : playType === 'coverage_sack' ? '⏱ Record Coverage Sack' : '✓ Record Play'}
               </button>
             </>
           )}

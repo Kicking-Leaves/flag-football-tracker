@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { PointAfterData, RosterEntry } from "@/lib/types";
+import type { PointAfterData, RosterEntry, TryPoints } from "@/lib/types";
 
 interface PointAfterEntryProps {
   scoringTeam: "team" | "opponent";
@@ -9,20 +9,35 @@ interface PointAfterEntryProps {
   onSubmit: (data: PointAfterData) => void;
 }
 
-/** Point-after-touchdown entry. 1pt always succeeds; 2pt can fail. */
+/**
+ * Point-after-touchdown entry (WIAA): automatic 1pt, or a 2pt try from the 10
+ * or a 3pt try from the 17, which can fail.
+ */
+const TRY_OPTIONS: {
+  type: TryPoints;
+  label: string;
+  detail: string;
+  active: string;
+}[] = [
+  { type: 1, label: "1-Point", detail: "Automatic", active: "bg-yellow-500" },
+  { type: 2, label: "2-Point", detail: "from the 10", active: "bg-green-500" },
+  { type: 3, label: "3-Point", detail: "from the 17", active: "bg-blue-500" },
+];
+
 export default function PointAfterEntry({
   scoringTeam,
   roster,
   onSubmit,
 }: PointAfterEntryProps) {
-  const [type, setType] = useState<1 | 2>(1);
+  const [type, setType] = useState<TryPoints>(1);
   const [success, setSuccess] = useState(true);
   const [playType, setPlayType] = useState<"pass" | "run">("run");
   const [passer, setPasser] = useState("");
   const [receiver, setReceiver] = useState("");
   const [rusher, setRusher] = useState("");
 
-  const showRoster = scoringTeam === "team" && type === 2;
+  const isTry = type !== 1;
+  const showRoster = scoringTeam === "team" && isTry;
   const sorted = [...roster].sort(
     (a, b) =>
       Number(a.number) - Number(b.number) || a.name.localeCompare(b.name),
@@ -32,11 +47,11 @@ export default function PointAfterEntry({
     onSubmit({
       type,
       success: type === 1 ? true : success,
-      playType: type === 2 ? playType : undefined,
-      passer: type === 2 && playType === "pass" ? passer || null : null,
+      playType: isTry ? playType : undefined,
+      passer: isTry && playType === "pass" ? passer || null : null,
       receiver:
-        type === 2 && playType === "pass" && success ? receiver || null : null,
-      rusher: type === 2 && playType === "run" ? rusher || null : null,
+        isTry && playType === "pass" && success ? receiver || null : null,
+      rusher: isTry && playType === "run" ? rusher || null : null,
     });
   }
 
@@ -44,28 +59,25 @@ export default function PointAfterEntry({
     <div className="space-y-4">
       <div className="rounded-2xl bg-white p-6 shadow-xl">
         <p className="mb-3 text-sm font-bold text-gray-600">POINT AFTER</p>
-        <div className="mb-4 grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => setType(1)}
-            className={`rounded-xl py-4 font-bold ${
-              type === 1 ? "bg-yellow-500 text-white" : "bg-gray-100"
-            }`}
-          >
-            1-Point Kick
-          </button>
-          <button
-            type="button"
-            onClick={() => setType(2)}
-            className={`rounded-xl py-4 font-bold ${
-              type === 2 ? "bg-green-500 text-white" : "bg-gray-100"
-            }`}
-          >
-            2-Point Try
-          </button>
+        <div className="mb-4 grid grid-cols-3 gap-3">
+          {TRY_OPTIONS.map((o) => (
+            <button
+              key={o.type}
+              type="button"
+              onClick={() => setType(o.type)}
+              className={`rounded-xl py-3 font-bold leading-tight ${
+                type === o.type ? `${o.active} text-white` : "bg-gray-100"
+              }`}
+            >
+              {o.label}
+              <span className="block text-xs font-semibold opacity-80">
+                {o.detail}
+              </span>
+            </button>
+          ))}
         </div>
 
-        {type === 2 && (
+        {isTry && (
           <>
             <div className="mb-4 grid grid-cols-2 gap-3">
               <button

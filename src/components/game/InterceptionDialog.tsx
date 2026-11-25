@@ -57,14 +57,14 @@ export default function InterceptionDialog({
                 value={fieldPos}
                 onChange={(e) =>
                   setFieldPos(
-                    Math.max(0, Math.min(51, parseInt(e.target.value) || 0)),
+                    Math.max(0, Math.min(50, parseInt(e.target.value) || 0)),
                   )
                 }
                 className="flex-1 rounded-xl border-2 px-4 py-3 text-center text-2xl font-bold"
               />
               <button
                 type="button"
-                onClick={() => setFieldPos(Math.min(51, fieldPos + 5))}
+                onClick={() => setFieldPos(Math.min(50, fieldPos + 5))}
                 className="rounded-lg bg-gray-300 px-4 py-2 font-bold"
               >
                 +5

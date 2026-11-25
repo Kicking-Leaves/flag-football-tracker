@@ -8,12 +8,19 @@ import {
   createPlayer,
   deletePlayer,
   getActiveSeason,
+  getAthletes,
   getPlayers,
+  getRosterEntriesForAthletes,
+  getSchool,
   getSeason,
   getSeasons,
+  getTeam,
   updatePlayer,
+  type RosterEntryWithTeam,
 } from "@/lib/db";
-import type { Player, Season } from "@/lib/types";
+import type { Athlete, Player, School, Season } from "@/lib/types";
+import RosterImport from "@/components/roster/RosterImport";
+import AddFromSchool from "@/components/roster/AddFromSchool";
 import { DEFENSE_POSITIONS, OFFENSE_POSITIONS } from "@/lib/types";
 
 // ---------- helpers ----------
@@ -85,6 +92,11 @@ export default function RosterPage({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<PlayerFormFields>(emptyForm());
   const [editError, setEditError] = useState<string | null>(null);
+
+  // School context: athletes at the team's school and where they're rostered.
+  const [school, setSchool] = useState<School | null>(null);
+  const [athletes, setAthletes] = useState<Athlete[]>([]);
+  const [schoolEntries, setSchoolEntries] = useState<RosterEntryWithTeam[]>([]);
 
   // Copy-from-previous state
   const [copying, setCopying] = useState(false);
@@ -165,8 +177,29 @@ export default function RosterPage({
     }
     setLoading(true);
     try {
-      const list = await getPlayers(supabase, teamId, season.id);
+      const [list, team] = await Promise.all([
+        getPlayers(supabase, teamId, season.id),
+        getTeam(supabase, teamId),
+      ]);
       setPlayers(list);
+      if (team?.school_id) {
+        const [sch, aths] = await Promise.all([
+          getSchool(supabase, team.school_id),
+          getAthletes(supabase, team.school_id),
+        ]);
+        setSchool(sch);
+        setAthletes(aths);
+        setSchoolEntries(
+          await getRosterEntriesForAthletes(
+            supabase,
+            aths.map((a) => a.id),
+          ),
+        );
+      } else {
+        setSchool(null);
+        setAthletes([]);
+        setSchoolEntries([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load roster");
     } finally {
@@ -294,6 +327,8 @@ export default function RosterPage({
       }
       for (const p of sourceRoster) {
         await createPlayer(supabase, teamId, season.id, p.name, p.number, {
+          // Keep the same athlete; unlinked legacy rows get one if the team has a school.
+          athlete_id: p.athlete_id ?? undefined,
           graduation_year: p.graduation_year ?? null,
           position_offense: p.position_offense ?? null,
           position_defense: p.position_defense ?? null,
@@ -316,6 +351,17 @@ export default function RosterPage({
     );
 
   const otherSeasons = allSeasons.filter((s) => s.id !== season?.id);
+
+  /** Other teams (any season) where the same athlete is rostered. */
+  function otherTeamsLabel(p: Player): string {
+    if (!p.athlete_id) return "";
+    const seen = new Set<string>();
+    return schoolEntries
+      .filter((e) => e.athlete_id === p.athlete_id && e.team_id !== teamId)
+      .filter((e) => (seen.has(e.team_id) ? false : (seen.add(e.team_id), true)))
+      .map((e) => `${e.team_name} #${e.number}`)
+      .join(", ");
+  }
 
   // No-season state: prompt user back to team dashboard.
   if (!resolvingSeason && !season) {
@@ -387,6 +433,31 @@ export default function RosterPage({
               {copying ? "Copying…" : `Copy from ${otherSeasons[0]?.displayName}`}
             </button>
           </div>
+        )}
+
+        {season && (
+          <RosterImport
+            teamId={teamId}
+            seasonId={season.id}
+            seasonName={season.displayName}
+            schoolName={school?.name ?? null}
+            roster={players}
+            athletes={athletes}
+            schoolEntries={schoolEntries}
+            onImported={refresh}
+          />
+        )}
+
+        {season && school && (
+          <AddFromSchool
+            teamId={teamId}
+            seasonId={season.id}
+            schoolName={school.name}
+            roster={players}
+            athletes={athletes}
+            schoolEntries={schoolEntries}
+            onAdded={refresh}
+          />
         )}
 
         <form
@@ -509,6 +580,11 @@ export default function RosterPage({
                             </>
                           ) : null}
                         </div>
+                        {otherTeamsLabel(p) && (
+                          <div className="text-xs text-purple-700">
+                            Also on {otherTeamsLabel(p)}
+                          </div>
+                        )}
                       </Link>
                       <div className="flex flex-shrink-0 flex-wrap justify-end gap-2">
                         <button

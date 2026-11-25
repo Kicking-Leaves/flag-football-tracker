@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getGame, getTeam } from "@/lib/db";
-import { generateGameCSV } from "@/lib/csv";
+import { generateGameCSV, generatePlayByPlayCSV } from "@/lib/csv";
 import StatsTable, {
   defenseRows,
   passingRows,
@@ -41,9 +41,15 @@ export default async function GameStatsPage({
     game_date: game.game_date,
     game_data: gd,
   });
-  const filename = `${team.name}_vs_${game.opponent_name}_${new Date(game.game_date)
+  const fileBase = `${team.name}_vs_${game.opponent_name}_${new Date(game.game_date)
     .toISOString()
-    .slice(0, 10)}.csv`;
+    .slice(0, 10)}`;
+  const filename = `${fileBase}.csv`;
+  const playByPlayCsv = generatePlayByPlayCSV({
+    teamName: team.name,
+    opponent_name: game.opponent_name,
+    game_data: gd,
+  });
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-blue-50 pb-24">
@@ -144,6 +150,18 @@ export default async function GameStatsPage({
             filename={filename}
             emailSubject={`Game Stats: ${team.name} vs ${game.opponent_name}`}
             emailBody={`Final: ${team.name} ${gd.score.team} - ${game.opponent_name} ${gd.score.opponent}\nDate: ${new Date(game.game_date).toLocaleDateString()}\n\n`}
+          />
+          <p className="mb-2 mt-5 text-sm text-gray-600">
+            Play-by-play with the time each play was recorded, for lining up
+            with video.
+          </p>
+          <CSVExport
+            csv={playByPlayCsv}
+            filename={`${fileBase}_play-by-play.csv`}
+            emailSubject={`Play-by-Play: ${team.name} vs ${game.opponent_name}`}
+            emailBody={`Play-by-play: ${team.name} vs ${game.opponent_name}\n\n${playByPlayCsv}`}
+            downloadLabel="Download Play-by-Play"
+            emailLabel="Email Play-by-Play"
           />
         </section>
 

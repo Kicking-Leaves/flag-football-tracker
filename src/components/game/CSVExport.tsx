@@ -5,6 +5,9 @@ interface CSVExportProps {
   filename: string;
   emailSubject?: string;
   emailBody?: string;
+  /** Button text; defaults to "Download CSV" / "Email CSV". */
+  downloadLabel?: string;
+  emailLabel?: string;
 }
 
 function triggerDownload(csv: string, filename: string) {
@@ -43,6 +46,8 @@ export default function CSVExport({
   filename,
   emailSubject,
   emailBody,
+  downloadLabel = "Download CSV",
+  emailLabel = "Email CSV",
 }: CSVExportProps) {
   async function handleDownload() {
     const shared = await tryShareCSV(csv, filename);
@@ -68,14 +73,14 @@ export default function CSVExport({
         onClick={handleDownload}
         className="rounded-xl bg-gradient-to-r from-green-600 to-green-700 py-3 font-bold text-white shadow-lg"
       >
-        Download CSV
+        {downloadLabel}
       </button>
       <button
         type="button"
         onClick={handleEmail}
         className="rounded-xl bg-gradient-to-r from-orange-600 to-orange-700 py-3 font-bold text-white shadow-lg"
       >
-        Email CSV
+        {emailLabel}
       </button>
     </div>
   );

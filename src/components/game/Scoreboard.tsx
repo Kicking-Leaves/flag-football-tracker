@@ -1,6 +1,7 @@
 "use client";
 
 import type { GameState } from "@/lib/types";
+import { scorebugFromGameState } from "@/lib/scorebug";
 
 interface ScoreboardProps {
   state: GameState;
@@ -8,65 +9,48 @@ interface ScoreboardProps {
   opponentName: string;
 }
 
-function ordinal(n: number): string {
-  if (n === 1) return "1st";
-  if (n === 2) return "2nd";
-  if (n === 3) return "3rd";
-  return "4th";
-}
-
 export default function Scoreboard({
   state,
   teamName,
   opponentName,
 }: ScoreboardProps) {
-  const isOffense = state.possession === "team";
-  const target = state.firstDownTarget;
-  const targetLabel = target >= 51 ? "END" : String(target);
-
-  const halfLabel =
-    state.half === "OT"
-      ? `OT-${state.overtimeRound}`
-      : `${state.half === 1 ? "1st" : "2nd"} Half`;
+  // Same formatter the stream overlay uses, so the two can't disagree.
+  const bug = scorebugFromGameState(state, teamName, opponentName);
 
   return (
     <div className="mb-4 rounded-2xl bg-white p-6 shadow-xl">
       <div className="grid grid-cols-3 items-center gap-3">
         <div className="text-center">
           <p className="text-xs font-semibold uppercase text-gray-500">
-            {teamName}
+            {bug.teamName}
           </p>
-          <p className="text-5xl font-bold text-green-600">{state.score.team}</p>
+          <p className="text-5xl font-bold text-green-600">{bug.teamScore}</p>
         </div>
         <div className="text-center">
           <p className="text-xs font-semibold uppercase text-gray-400">
-            {halfLabel}
+            {bug.periodLabel}
           </p>
         </div>
         <div className="text-center">
           <p className="text-xs font-semibold uppercase text-gray-500">
-            {opponentName}
+            {bug.opponentName}
           </p>
           <p className="text-5xl font-bold text-blue-600">
-            {state.score.opponent}
+            {bug.opponentScore}
           </p>
         </div>
       </div>
 
-      {!state.awaitingOvertimeConversion && !state.completed && (
+      {bug.downLabel && (
         <div className="mt-4 rounded-xl bg-gray-800 p-4 text-center text-white">
           <p className="text-sm text-gray-300">
             Possession:{" "}
             <span className="font-bold text-yellow-400">
-              {isOffense ? teamName : opponentName}
+              {bug.possession === "team" ? bug.teamName : bug.opponentName}
             </span>
           </p>
-          <p className="mt-1 text-2xl font-bold">
-            {ordinal(state.down)} & {state.yardsToGo}
-          </p>
-          <p className="mt-1 text-sm text-gray-300">
-            Ball on {state.lineOfScrimmage} → 1st: {targetLabel}
-          </p>
+          <p className="mt-1 text-2xl font-bold">{bug.downLabel}</p>
+          <p className="mt-1 text-sm text-gray-300">{bug.fieldLabel}</p>
         </div>
       )}
     </div>

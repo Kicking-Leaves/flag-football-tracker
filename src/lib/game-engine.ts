@@ -18,13 +18,20 @@ import type {
   OTConversionData,
   Possession,
   RosterEntry,
+  TryPoints,
 } from "./types";
 
 // ---------- Constants ----------
 
+// WIAA field: 50 yards goal line to goal line, measured from the offense's
+// own goal line. The two zones to gain sit 17 yards from each end zone (the
+// offense's 17 and 33); the third "line" is the goal line itself.
 export const FIELD_MIN = 0;
-export const FIELD_MAX = 51;
-export const FIRST_DOWN_LINES = [17, 34, 51] as const;
+export const FIELD_MAX = 50;
+export const FIRST_DOWN_LINES = [17, 33, 50] as const;
+
+/** Spot (yards from the goal line) each try is run from: 1pt 5, 2pt 10, 3pt 17. */
+export const TRY_SPOT: Record<TryPoints, number> = { 1: 5, 2: 10, 3: 17 };
 
 // ---------- Factory helpers ----------
 
@@ -117,9 +124,9 @@ export function calculateYardsToFirstDown(
   if (currentTarget && los < currentTarget) {
     return currentTarget - los;
   }
-  if (los >= 51) return 0;
-  if (los >= 34) return 51 - los;
-  if (los >= 17) return 34 - los;
+  if (los >= 50) return 0;
+  if (los >= 33) return 50 - los;
+  if (los >= 17) return 33 - los;
   return 17 - los;
 }
 
@@ -130,12 +137,35 @@ export function getFirstDownTargetLine(
   if (currentTarget && los < currentTarget) {
     return currentTarget;
   }
-  if (los >= 34) return 51;
-  if (los >= 17) return 34;
+  if (los >= 33) return 50;
+  if (los >= 17) return 33;
   return 17;
 }
 
 // ---------- Utilities ----------
+
+/**
+ * ISO 8601 timestamp in the device's local time with its UTC offset, e.g.
+ * "2026-11-21T19:04:32.120-08:00". Keeping the offset (rather than UTC) means
+ * the scorer's wall-clock time survives even when exports are built on a
+ * server in another time zone.
+ */
+export function localIsoTimestamp(date: Date = new Date()): string {
+  const pad = (n: number, w = 2) => String(Math.abs(n)).padStart(w, "0");
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}` +
+    `.${pad(date.getMilliseconds(), 3)}` +
+    `${sign}${pad(Math.trunc(offsetMin / 60))}:${pad(offsetMin % 60)}`
+  );
+}
+
+/** Recording metadata stamped on every play row. */
+function recordMeta(g: GameState): Pick<Play, "recordedAt" | "half"> {
+  return { recordedAt: localIsoTimestamp(), half: g.half };
+}
 
 function clone<T>(state: T): T {
   // structuredClone is available in Node 18+ / all modern browsers.
@@ -167,6 +197,7 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
     id: Date.now(),
     ...playData,
     ...stateBeforePlay,
+    ...recordMeta(g),
   };
   g.plays.push(play);
 
@@ -207,6 +238,9 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
         r.offense.rushingYards += playData.yards;
         if (playData.touchdown) r.offense.touchdowns++;
       }
+    } else if (playData.playType === "coverage_sack") {
+      // WIAA 7-second count expired: no yards, no player stats, down counts.
+      g.stats.offense.totalPlays++;
     }
     if (playData.firstDown) g.stats.offense.firstDowns++;
     if (playData.touchdown) {
@@ -306,7 +340,8 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
 }
 
 /**
- * Point after touchdown. 1pt always succeeds in flag football; 2pt can fail.
+ * Point after touchdown. WIAA: the 1pt is automatic; the 2pt (from the 10)
+ * and 3pt (from the 17) tries can fail.
  * After the point after, possession switches and ball returns to the 5.
  */
 export function recordPointAfter(state: GameState, data: PointAfterData): GameState {
@@ -318,6 +353,7 @@ export function recordPointAfter(state: GameState, data: PointAfterData): GameSt
   }
 
   g.plays.push({
+    ...recordMeta(g),
     id: Date.now(),
     playType: "point_after",
     possession: g.possession,
@@ -331,7 +367,7 @@ export function recordPointAfter(state: GameState, data: PointAfterData): GameSt
     rusher: data.playType === "run" ? data.rusher ?? null : null,
     down: 0,
     yardsToGo: 0,
-    lineOfScrimmage: data.type === 1 ? 5 : 10,
+    lineOfScrimmage: TRY_SPOT[data.type],
   });
 
   // Possession switches after PAT.
@@ -349,6 +385,8 @@ export function recordPointAfter(state: GameState, data: PointAfterData): GameSt
  */
 export function recordPenalty(state: GameState, data: PenaltyData): GameState {
   const g = clone(state);
+  // Offense at the time of the foul (a loss of down on 4th can flip it below).
+  const offense = g.possession;
   const penaltyAmount = data.onOffense ? -data.yards : data.yards;
   const newLOS = Math.max(FIELD_MIN, Math.min(FIELD_MAX, g.lineOfScrimmage + penaltyAmount));
   g.lineOfScrimmage = newLOS;
@@ -369,8 +407,10 @@ export function recordPenalty(state: GameState, data: PenaltyData): GameState {
   // Else replay the down (no change to down number).
 
   g.plays.push({
+    ...recordMeta(g),
     id: Date.now(),
     playType: "penalty",
+    possession: offense,
     yards: penaltyAmount,
     onOffense: data.onOffense,
     lossOfDown: data.lossOfDown,
@@ -398,6 +438,8 @@ export function handleInterceptionDetails(
   if (isTD) {
     if (g.possession === "team") g.score.team += 6;
     else g.score.opponent += 6;
+    const intPlay = g.plays[g.plays.length - 1];
+    if (intPlay?.interception) intPlay.interceptionReturnTD = true;
     // Keep possession — UI will prompt for point after.
   } else {
     g.down = 1;
@@ -436,7 +478,8 @@ export function startOvertime(state: GameState, firstOffense: Possession): GameS
 }
 
 /**
- * WIAA-style overtime conversion: 1-pt try from the 5 OR 2-pt try from the 10.
+ * WIAA-style overtime conversion: each attempt is one of 1pt (pass only) from
+ * the 5, 2pt from the 10, or 3pt from the 17.
  * Same team starts on offense each round. Both teams must attempt per round.
  * Game ends as soon as one team is ahead after both have attempted.
  *
@@ -455,6 +498,7 @@ export function handleOvertimeConversion(
   }
 
   g.plays.push({
+    ...recordMeta(g),
     id: Date.now(),
     playType: "point_after",
     possession: g.possession,
@@ -466,7 +510,7 @@ export function handleOvertimeConversion(
     points: data.success ? data.type : 0,
     down: 0,
     yardsToGo: 0,
-    lineOfScrimmage: data.type === 1 ? 5 : 10,
+    lineOfScrimmage: TRY_SPOT[data.type],
   });
 
   // After the play is recorded, check whether both teams have attempted in
@@ -532,7 +576,41 @@ export function undoLastPlay(state: GameState): GameState {
     return g;
   }
 
+  // Tries (after a TD, or in OT) carry no field snapshot worth restoring: take
+  // the points back and return to the "awaiting try" state for the same team.
+  if (lastPlay.isPointAfter || lastPlay.isOvertimeConversion) {
+    g.plays.pop();
+    const scorer = lastPlay.possession ?? flipPossession(g.possession);
+    const pts = lastPlay.points ?? 0;
+    if (scorer === "team") g.score.team = Math.max(0, g.score.team - pts);
+    else g.score.opponent = Math.max(0, g.score.opponent - pts);
+    g.possession = scorer;
+
+    if (lastPlay.isOvertimeConversion) {
+      g.overtimeRound = lastPlay.overtimeRound ?? g.overtimeRound;
+      g.awaitingOvertimeConversion = true;
+      g.completed = false;
+      delete g.result;
+    } else {
+      // Back to just after the scoring play, which left the field state put.
+      const scoringPlay = g.plays[g.plays.length - 1];
+      if (scoringPlay) {
+        g.down = scoringPlay.down || 1;
+        g.yardsToGo = scoringPlay.yardsToGo;
+        g.lineOfScrimmage = scoringPlay.lineOfScrimmage;
+        if (scoringPlay.firstDownTarget) g.firstDownTarget = scoringPlay.firstDownTarget;
+      }
+    }
+    return g;
+  }
+
   g.plays.pop();
+
+  // Possession goes back to whoever had the ball for this snap — punts,
+  // safeties, turnovers on downs, and interceptions all flip it.
+  if (lastPlay.possession) g.possession = lastPlay.possession;
+  delete g.awaitingInterceptionInfo;
+  delete g.interceptionTeam;
 
   // Restore field state from the snapshot stored in the play row.
   g.down = lastPlay.down || 1;
@@ -570,6 +648,8 @@ export function undoLastPlay(state: GameState): GameState {
       r.offense.receptions = Math.max(0, r.offense.receptions - 1);
       r.offense.receivingYards = Math.max(0, r.offense.receivingYards - (lastPlay.yards || 0));
     }
+  } else if (lastPlay.playType === "coverage_sack" && lastPlay.possession === "team") {
+    g.stats.offense.totalPlays = Math.max(0, g.stats.offense.totalPlays - 1);
   } else if (lastPlay.playType === "run" && lastPlay.possession === "team") {
     g.stats.offense.rushAttempts = Math.max(0, g.stats.offense.rushAttempts - 1);
     g.stats.offense.rushingYards = Math.max(0, g.stats.offense.rushingYards - (lastPlay.yards || 0));
@@ -602,6 +682,34 @@ export function undoLastPlay(state: GameState): GameState {
         );
     } else {
       g.score.opponent = Math.max(0, g.score.opponent - 6);
+    }
+  }
+
+  if (lastPlay.safety) {
+    // Safety scores 2 for the defense.
+    if (lastPlay.possession === "team") g.score.opponent = Math.max(0, g.score.opponent - 2);
+    else g.score.team = Math.max(0, g.score.team - 2);
+  }
+
+  if (lastPlay.interceptionReturnTD) {
+    if (lastPlay.possession === "team") g.score.opponent = Math.max(0, g.score.opponent - 6);
+    else g.score.team = Math.max(0, g.score.team - 6);
+  }
+
+  if (lastPlay.possession === "opponent") {
+    if (lastPlay.playType === "punt" || lastPlay.isPunt) {
+      g.stats.defense.forcedPunts = Math.max(0, (g.stats.defense.forcedPunts || 0) - 1);
+    } else if (
+      lastPlay.down === 4 &&
+      !lastPlay.firstDown &&
+      !lastPlay.touchdown &&
+      !lastPlay.interception &&
+      !lastPlay.safety
+    ) {
+      g.stats.defense.turnoversOnDowns = Math.max(
+        0,
+        (g.stats.defense.turnoversOnDowns || 0) - 1,
+      );
     }
   }
 

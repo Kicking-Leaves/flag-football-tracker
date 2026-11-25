@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { OTConversionData } from "@/lib/types";
+import type { OTConversionData, TryPoints } from "@/lib/types";
 
 interface OvertimeConversionEntryProps {
   teamName: string;
@@ -11,7 +11,21 @@ interface OvertimeConversionEntryProps {
   onSubmit: (data: OTConversionData) => void;
 }
 
-/** WIAA-style OT conversion: 1pt from 5yd OR 2pt from 10yd. */
+/**
+ * WIAA-style OT conversion: 1pt (pass only) from the 5, 2pt from the 10, or
+ * 3pt from the 17.
+ */
+const OT_OPTIONS: {
+  type: TryPoints;
+  label: string;
+  detail: string;
+  active: string;
+}[] = [
+  { type: 1, label: "1-Point", detail: "from 5 (pass)", active: "bg-yellow-500" },
+  { type: 2, label: "2-Point", detail: "from 10", active: "bg-green-500" },
+  { type: 3, label: "3-Point", detail: "from 17", active: "bg-blue-500" },
+];
+
 export default function OvertimeConversionEntry({
   teamName,
   opponentName,
@@ -19,7 +33,7 @@ export default function OvertimeConversionEntry({
   round,
   onSubmit,
 }: OvertimeConversionEntryProps) {
-  const [type, setType] = useState<1 | 2>(1);
+  const [type, setType] = useState<TryPoints>(1);
   const [success, setSuccess] = useState(true);
 
   const offenseName = possession === "team" ? teamName : opponentName;
@@ -32,25 +46,22 @@ export default function OvertimeConversionEntry({
       </div>
 
       <div className="rounded-2xl bg-white p-6 shadow-xl">
-        <div className="mb-4 grid grid-cols-2 gap-3">
-          <button
-            type="button"
-            onClick={() => setType(1)}
-            className={`rounded-xl py-4 font-bold ${
-              type === 1 ? "bg-yellow-500 text-white" : "bg-gray-100"
-            }`}
-          >
-            1-Point (from 5)
-          </button>
-          <button
-            type="button"
-            onClick={() => setType(2)}
-            className={`rounded-xl py-4 font-bold ${
-              type === 2 ? "bg-green-500 text-white" : "bg-gray-100"
-            }`}
-          >
-            2-Point (from 10)
-          </button>
+        <div className="mb-4 grid grid-cols-3 gap-3">
+          {OT_OPTIONS.map((o) => (
+            <button
+              key={o.type}
+              type="button"
+              onClick={() => setType(o.type)}
+              className={`rounded-xl py-3 font-bold leading-tight ${
+                type === o.type ? `${o.active} text-white` : "bg-gray-100"
+              }`}
+            >
+              {o.label}
+              <span className="block text-xs font-semibold opacity-80">
+                {o.detail}
+              </span>
+            </button>
+          ))}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <button

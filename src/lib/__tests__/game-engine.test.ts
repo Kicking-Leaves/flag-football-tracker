@@ -66,16 +66,16 @@ describe("calculateYardsToFirstDown", () => {
     expect(calculateYardsToFirstDown(5, null)).toBe(12); // 17 - 5
   });
 
-  it("returns yards to 34 when LOS is in zone 2", () => {
-    expect(calculateYardsToFirstDown(20, null)).toBe(14); // 34 - 20
+  it("returns yards to the 33 when LOS is in zone 2", () => {
+    expect(calculateYardsToFirstDown(20, null)).toBe(13); // 33 - 20
   });
 
   it("returns yards to goal when in zone 3", () => {
-    expect(calculateYardsToFirstDown(40, null)).toBe(11); // 51 - 40
+    expect(calculateYardsToFirstDown(40, null)).toBe(10); // 50 - 40
   });
 
   it("returns 0 when already at end zone", () => {
-    expect(calculateYardsToFirstDown(51, null)).toBe(0);
+    expect(calculateYardsToFirstDown(50, null)).toBe(0);
   });
 
   it("sticky: preserves existing target when LOS has not crossed it", () => {
@@ -84,8 +84,8 @@ describe("calculateYardsToFirstDown", () => {
   });
 
   it("sticky: ignores stale target when LOS has crossed it (null recalc)", () => {
-    // LOS at 20 already past target 17 → recalculates to 34 zone
-    expect(calculateYardsToFirstDown(20, 17)).toBe(14); // 34 - 20
+    // LOS at 20 already past target 17 → recalculates to the 33
+    expect(calculateYardsToFirstDown(20, 17)).toBe(13); // 33 - 20
   });
 });
 
@@ -94,12 +94,17 @@ describe("getFirstDownTargetLine", () => {
     expect(getFirstDownTargetLine(5, null)).toBe(17);
   });
 
-  it("returns 34 for LOS in zone 2", () => {
-    expect(getFirstDownTargetLine(20, null)).toBe(34);
+  it("returns 33 for LOS in zone 2", () => {
+    expect(getFirstDownTargetLine(20, null)).toBe(33);
   });
 
-  it("returns 51 for LOS in zone 3", () => {
-    expect(getFirstDownTargetLine(40, null)).toBe(51);
+  it("returns the goal line (50) for LOS in zone 3", () => {
+    expect(getFirstDownTargetLine(40, null)).toBe(50);
+  });
+
+  it("zone boundaries: 32 is still zone 2, 33 is zone 3", () => {
+    expect(getFirstDownTargetLine(32, null)).toBe(33);
+    expect(getFirstDownTargetLine(33, null)).toBe(50);
   });
 
   it("sticky: returns existing target when LOS has not crossed it", () => {
@@ -117,7 +122,7 @@ describe("addPlay — first-down progression", () => {
     // 13 yards from LOS 5 → new LOS 18, which crosses 17
     const next = addPlay(state, passPlay(13));
     expect(next.down).toBe(1);
-    expect(next.firstDownTarget).toBe(34);
+    expect(next.firstDownTarget).toBe(33);
     expect(next.lineOfScrimmage).toBe(18);
   });
 
@@ -236,6 +241,69 @@ describe("recordPointAfter — 2pt", () => {
     const next = recordPointAfter(state, { type: 2, success: false });
     expect(next.score.team).toBe(6); // unchanged
     expect(next.possession).toBe("opponent");
+  });
+});
+
+describe("recordPointAfter — 3pt", () => {
+  it("success adds 3, records the try from the 17, and switches possession", () => {
+    const state = makeGameState({ score: { team: 6, opponent: 0 } });
+    const next = recordPointAfter(state, { type: 3, success: true });
+    expect(next.score.team).toBe(9);
+    expect(next.possession).toBe("opponent");
+    const play = next.plays[next.plays.length - 1];
+    expect(play.attempt).toBe(3);
+    expect(play.points).toBe(3);
+    expect(play.lineOfScrimmage).toBe(17);
+  });
+
+  it("failure adds 0", () => {
+    const state = makeGameState({
+      possession: "opponent",
+      score: { team: 0, opponent: 6 },
+    });
+    const next = recordPointAfter(state, { type: 3, success: false });
+    expect(next.score.opponent).toBe(6);
+    expect(next.possession).toBe("team");
+  });
+});
+
+// ===========================================================================
+// Coverage sack (WIAA 2026-27)
+// ===========================================================================
+
+describe("addPlay — coverage sack", () => {
+  const sack = (possession: "team" | "opponent" = "team") => ({
+    possession,
+    playType: "coverage_sack" as const,
+    yards: 0,
+  });
+
+  it("keeps the spot, counts the down, and keeps the target", () => {
+    const state = makeGameState({ lineOfScrimmage: 10, firstDownTarget: 17, down: 2 });
+    const next = addPlay(state, sack());
+    expect(next.lineOfScrimmage).toBe(10);
+    expect(next.down).toBe(3);
+    expect(next.firstDownTarget).toBe(17);
+    expect(next.yardsToGo).toBe(7);
+  });
+
+  it("on 4th down turns the ball over on downs at the spot", () => {
+    const state = makeGameState({ lineOfScrimmage: 10, firstDownTarget: 17, down: 4 });
+    const next = addPlay(state, sack());
+    expect(next.possession).toBe("opponent");
+    expect(next.down).toBe(1);
+  });
+
+  it("counts as an offensive play but not a pass or rush attempt; undo reverses it", () => {
+    const state = makeGameState({ lineOfScrimmage: 10, firstDownTarget: 17, down: 1 });
+    const next = addPlay(state, sack());
+    expect(next.stats.offense.totalPlays).toBe(state.stats.offense.totalPlays + 1);
+    expect(next.stats.offense.passAttempts).toBe(state.stats.offense.passAttempts);
+    expect(next.stats.offense.rushAttempts).toBe(state.stats.offense.rushAttempts);
+    const undone = undoLastPlay(next);
+    expect(undone.stats.offense.totalPlays).toBe(state.stats.offense.totalPlays);
+    expect(undone.down).toBe(1);
+    expect(undone.lineOfScrimmage).toBe(10);
   });
 });
 
@@ -408,6 +476,25 @@ describe("handleOvertimeConversion", () => {
     expect(next.possession).toBe("opponent");
     expect(next.awaitingOvertimeConversion).toBe(true);
     expect(next.score.team).toBe(1);
+  });
+
+  it("3pt conversion from the 17 beats a 2pt conversion and ends the game", () => {
+    let state = makeGameState({
+      isOvertime: true,
+      half: "OT",
+      overtimeRound: 1,
+      overtimeFirstOffense: "team",
+      possession: "team",
+      awaitingOvertimeConversion: true,
+      score: { team: 6, opponent: 6 },
+    });
+    state = handleOvertimeConversion(state, { type: 2, success: true }); // team 8
+    expect(state.plays[state.plays.length - 1].lineOfScrimmage).toBe(10);
+    state = handleOvertimeConversion(state, { type: 3, success: true }); // opp 9
+    expect(state.plays[state.plays.length - 1].lineOfScrimmage).toBe(17);
+    expect(state.score).toEqual({ team: 8, opponent: 9 });
+    expect(state.completed).toBe(true);
+    expect(state.result).toBe("loss");
   });
 
   it("both teams convert, scores still tied → new round, same first offense team", () => {
@@ -786,6 +873,121 @@ describe("undoLastPlay", () => {
   });
 });
 
+describe("undoLastPlay — tries and possession changes", () => {
+  it("undo a 3pt try: points come off, scoring team is back on the try", () => {
+    let state = makeGameState({ lineOfScrimmage: 30, firstDownTarget: 33, down: 2 });
+    state = addPlay(state, passPlay(20, { touchdown: true })); // 6-0
+    state = recordPointAfter(state, { type: 3, success: true }); // 9-0, opp ball
+    expect(state.possession).toBe("opponent");
+
+    const undone = undoLastPlay(state);
+    expect(undone.score.team).toBe(6);
+    expect(undone.possession).toBe("team");
+    expect(undone.lineOfScrimmage).toBe(30);
+    expect(undone.down).toBe(2);
+    // Last play is the TD again, so the UI goes back to point-after mode.
+    expect(undone.plays[undone.plays.length - 1].touchdown).toBe(true);
+
+    // Undoing again removes the TD too.
+    const twice = undoLastPlay(undone);
+    expect(twice.score.team).toBe(0);
+  });
+
+  it("undo a failed try leaves the score and restores possession", () => {
+    let state = makeGameState({ possession: "opponent", score: { team: 0, opponent: 6 } });
+    state = recordPointAfter(state, { type: 2, success: false });
+    const undone = undoLastPlay(state);
+    expect(undone.score.opponent).toBe(6);
+    expect(undone.possession).toBe("opponent");
+  });
+
+  it("undo the game-ending OT conversion reopens the game in the same round", () => {
+    let state = makeGameState({
+      isOvertime: true,
+      half: "OT",
+      overtimeRound: 1,
+      overtimeFirstOffense: "team",
+      possession: "team",
+      awaitingOvertimeConversion: true,
+      score: { team: 6, opponent: 6 },
+    });
+    state = handleOvertimeConversion(state, { type: 1, success: true }); // 7-6
+    state = handleOvertimeConversion(state, { type: 3, success: false }); // final
+    expect(state.completed).toBe(true);
+
+    const undone = undoLastPlay(state);
+    expect(undone.completed).toBe(false);
+    expect(undone.result).toBeUndefined();
+    expect(undone.awaitingOvertimeConversion).toBe(true);
+    expect(undone.possession).toBe("opponent");
+    expect(undone.overtimeRound).toBe(1);
+    expect(undone.score).toEqual({ team: 7, opponent: 6 });
+  });
+
+  it("undo the OT conversion that started a new round goes back to the old round", () => {
+    let state = makeGameState({
+      isOvertime: true,
+      half: "OT",
+      overtimeRound: 1,
+      overtimeFirstOffense: "team",
+      possession: "team",
+      awaitingOvertimeConversion: true,
+      score: { team: 6, opponent: 6 },
+    });
+    state = handleOvertimeConversion(state, { type: 2, success: true }); // 8-6
+    state = handleOvertimeConversion(state, { type: 2, success: true }); // 8-8 → round 2
+    expect(state.overtimeRound).toBe(2);
+
+    const undone = undoLastPlay(state);
+    expect(undone.overtimeRound).toBe(1);
+    expect(undone.possession).toBe("opponent");
+    expect(undone.score).toEqual({ team: 8, opponent: 6 });
+  });
+
+  it("undo a punt gives the ball back to the punting team", () => {
+    const state = makeGameState({ possession: "opponent", lineOfScrimmage: 12, down: 4 });
+    const after = addPlay(state, { possession: "opponent", playType: "punt", isPunt: true, yards: 0 });
+    expect(after.possession).toBe("team");
+    expect(after.stats.defense.forcedPunts).toBe(1);
+    const undone = undoLastPlay(after);
+    expect(undone.possession).toBe("opponent");
+    expect(undone.lineOfScrimmage).toBe(12);
+    expect(undone.down).toBe(4);
+    expect(undone.stats.defense.forcedPunts).toBe(0);
+  });
+
+  it("undo a turnover on downs restores possession and the stat", () => {
+    const state = makeGameState({ possession: "opponent", lineOfScrimmage: 10, firstDownTarget: 17, down: 4 });
+    const after = addPlay(state, opponentRunPlay(2));
+    expect(after.possession).toBe("team");
+    expect(after.stats.defense.turnoversOnDowns).toBe(1);
+    const undone = undoLastPlay(after);
+    expect(undone.possession).toBe("opponent");
+    expect(undone.stats.defense.turnoversOnDowns).toBe(0);
+  });
+
+  it("undo a safety takes the 2 points back and restores possession", () => {
+    const state = makeGameState({ lineOfScrimmage: 3, down: 2 });
+    const after = addPlay(state, runPlay(-4, { safety: true }));
+    expect(after.score.opponent).toBe(2);
+    const undone = undoLastPlay(after);
+    expect(undone.score.opponent).toBe(0);
+    expect(undone.possession).toBe("team");
+    expect(undone.lineOfScrimmage).toBe(3);
+  });
+
+  it("undo a pick-six takes the 6 back and returns the ball to the passer's team", () => {
+    let state = makeGameState({ lineOfScrimmage: 20, down: 1 });
+    state = addPlay(state, passPlay(0, { complete: false, interception: true }));
+    state = handleInterceptionDetails(state, true, 0);
+    expect(state.score.opponent).toBe(6);
+    const undone = undoLastPlay(state);
+    expect(undone.score.opponent).toBe(0);
+    expect(undone.possession).toBe("team");
+    expect(undone.awaitingInterceptionInfo).toBeUndefined();
+  });
+});
+
 // ===========================================================================
 // Score adjustment
 // ===========================================================================
@@ -841,10 +1043,10 @@ describe("immutability", () => {
 // ===========================================================================
 
 describe("field boundary clamping", () => {
-  it("LOS cannot exceed 51 (end zone)", () => {
-    const state = makeGameState({ lineOfScrimmage: 45, firstDownTarget: 51 });
+  it("LOS cannot exceed 50 (goal line)", () => {
+    const state = makeGameState({ lineOfScrimmage: 45, firstDownTarget: 50 });
     const next = addPlay(state, passPlay(20)); // would go to 65 unclamped
-    expect(next.lineOfScrimmage).toBe(51);
+    expect(next.lineOfScrimmage).toBe(50);
   });
 
   it("LOS cannot go below 0", () => {
