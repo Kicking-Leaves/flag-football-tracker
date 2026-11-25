@@ -3,7 +3,7 @@
 //
 // Pure functions only — no React, no Supabase. Two adapters feed the same
 // formatter: one from the in-memory GameState, one from the flat row returned
-// by the get_overlay_scoreboard RPC.
+// by the rr_get_overlay_scoreboard RPC.
 
 import type { GameState, Possession } from "@/lib/types";
 
@@ -47,7 +47,7 @@ export interface ScorebugInput {
   awaitingOvertimeConversion: boolean;
 }
 
-/** Row shape returned by the get_overlay_scoreboard Postgres function. */
+/** Row shape returned by the rr_get_overlay_scoreboard Postgres function. */
 export interface OverlayScoreboardRow {
   team_name: string;
   opponent_name: string;

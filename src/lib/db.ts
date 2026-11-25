@@ -69,7 +69,7 @@ function compareSeasonsDesc(a: SeasonRow, b: SeasonRow): number {
 
 export async function getTeams(supabase: SupabaseClient): Promise<Team[]> {
   const { data: teamRows, error } = await supabase
-    .from("teams")
+    .from("rr_teams")
     .select(TEAM_SELECT)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -79,7 +79,7 @@ export async function getTeams(supabase: SupabaseClient): Promise<Team[]> {
   if (teams.length === 0) return teams;
 
   const { data: counts, error: countErr } = await supabase
-    .from("players")
+    .from("rr_players")
     .select("team_id")
     .in(
       "team_id",
@@ -100,7 +100,7 @@ export async function getTeam(
   teamId: string,
 ): Promise<Team | null> {
   const { data, error } = await supabase
-    .from("teams")
+    .from("rr_teams")
     .select(TEAM_SELECT)
     .eq("id", teamId)
     .maybeSingle();
@@ -120,7 +120,7 @@ export async function createTeam(
   if (!user) throw new Error("Not authenticated");
 
   const { data, error } = await supabase
-    .from("teams")
+    .from("rr_teams")
     .insert({ owner_id: user.id, name })
     .select(TEAM_SELECT)
     .single();
@@ -133,7 +133,7 @@ export async function updateTeam(
   id: string,
   name: string,
 ): Promise<void> {
-  const { error } = await supabase.from("teams").update({ name }).eq("id", id);
+  const { error } = await supabase.from("rr_teams").update({ name }).eq("id", id);
   if (error) throw error;
 }
 
@@ -142,20 +142,20 @@ export async function deleteTeam(
   id: string,
 ): Promise<void> {
   // Cascade: delete games and players first since FKs don't ON DELETE CASCADE.
-  const { error: gErr } = await supabase.from("games").delete().eq("team_id", id);
+  const { error: gErr } = await supabase.from("rr_games").delete().eq("team_id", id);
   if (gErr) throw gErr;
   const { error: pErr } = await supabase
-    .from("players")
+    .from("rr_players")
     .delete()
     .eq("team_id", id);
   if (pErr) throw pErr;
   // Seasons cascade is best-effort: with players + games gone, no FKs remain.
   const { error: sErr } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .delete()
     .eq("team_id", id);
   if (sErr) throw sErr;
-  const { error } = await supabase.from("teams").delete().eq("id", id);
+  const { error } = await supabase.from("rr_teams").delete().eq("id", id);
   if (error) throw error;
 }
 
@@ -163,7 +163,7 @@ export async function deleteTeam(
 
 export async function getSchools(supabase: SupabaseClient): Promise<School[]> {
   const { data, error } = await supabase
-    .from("schools")
+    .from("rr_schools")
     .select(SCHOOL_SELECT)
     .order("name", { ascending: true });
   if (error) throw error;
@@ -175,7 +175,7 @@ export async function getSchool(
   schoolId: string,
 ): Promise<School | null> {
   const { data, error } = await supabase
-    .from("schools")
+    .from("rr_schools")
     .select(SCHOOL_SELECT)
     .eq("id", schoolId)
     .maybeSingle();
@@ -189,7 +189,7 @@ export async function createSchool(
 ): Promise<School> {
   // owner_id defaults to auth.uid() in the database.
   const { data, error } = await supabase
-    .from("schools")
+    .from("rr_schools")
     .insert({ name })
     .select(SCHOOL_SELECT)
     .single();
@@ -209,7 +209,7 @@ export async function setTeamSchool(
   schoolId: string | null,
 ): Promise<void> {
   const { error } = await supabase
-    .from("teams")
+    .from("rr_teams")
     .update({ school_id: schoolId })
     .eq("id", teamId);
   if (error) throw error;
@@ -242,7 +242,7 @@ export async function linkTeamPlayersToSchool(
       athletes,
     );
     const { error } = await supabase
-      .from("players")
+      .from("rr_players")
       .update({ athlete_id: athlete.id })
       .eq("id", p.id);
     if (error) throw error;
@@ -282,7 +282,7 @@ export async function getAthletes(
   schoolId: string,
 ): Promise<Athlete[]> {
   const { data, error } = await supabase
-    .from("school_athletes")
+    .from("rr_athletes")
     .select(ATHLETE_SELECT)
     .eq("school_id", schoolId)
     .order("name", { ascending: true });
@@ -297,7 +297,7 @@ export async function createAthlete(
   graduationYear: number | null,
 ): Promise<Athlete> {
   const { data, error } = await supabase
-    .from("school_athletes")
+    .from("rr_athletes")
     .insert({ school_id: schoolId, name, graduation_year: graduationYear })
     .select(ATHLETE_SELECT)
     .single();
@@ -321,7 +321,7 @@ export async function getRosterEntriesForAthletes(
 ): Promise<RosterEntryWithTeam[]> {
   if (athleteIds.length === 0) return [];
   const { data, error } = await supabase
-    .from("players")
+    .from("rr_players")
     .select(PLAYER_SELECT)
     .in("athlete_id", athleteIds);
   if (error) throw error;
@@ -333,9 +333,9 @@ export async function getRosterEntriesForAthletes(
     ...new Set(players.map((p) => p.season_id).filter((id): id is string => !!id)),
   ];
   const [teamsRes, seasonsRes] = await Promise.all([
-    supabase.from("teams").select("id, name").in("id", teamIds),
+    supabase.from("rr_teams").select("id, name").in("id", teamIds),
     seasonIds.length
-      ? supabase.from("seasons").select(SEASON_SELECT).in("id", seasonIds)
+      ? supabase.from("rr_seasons").select(SEASON_SELECT).in("id", seasonIds)
       : Promise.resolve({ data: [] as SeasonRow[], error: null }),
   ]);
   if (teamsRes.error) throw teamsRes.error;
@@ -367,7 +367,7 @@ export async function getSeasons(
   teamId: string,
 ): Promise<Season[]> {
   const { data, error } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .select(SEASON_SELECT)
     .eq("team_id", teamId);
   if (error) throw error;
@@ -380,7 +380,7 @@ export async function getSeason(
   seasonId: string,
 ): Promise<Season | null> {
   const { data, error } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .select(SEASON_SELECT)
     .eq("id", seasonId)
     .maybeSingle();
@@ -393,7 +393,7 @@ export async function getActiveSeason(
   teamId: string,
 ): Promise<Season | null> {
   const { data, error } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .select(SEASON_SELECT)
     .eq("team_id", teamId)
     .eq("is_active", true)
@@ -415,14 +415,14 @@ export async function createSeason(
 ): Promise<Season> {
   // Deactivate any currently active season for this team first.
   const { error: deactivateErr } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .update({ is_active: false })
     .eq("team_id", teamId)
     .eq("is_active", true);
   if (deactivateErr) throw deactivateErr;
 
   const { data, error } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .insert({ team_id: teamId, year, term, is_active: true })
     .select(SEASON_SELECT)
     .single();
@@ -437,7 +437,7 @@ export async function setActiveSeason(
 ): Promise<void> {
   // Need the team_id so we can deactivate siblings.
   const { data: row, error: fetchErr } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .select("id, team_id")
     .eq("id", seasonId)
     .maybeSingle();
@@ -445,14 +445,14 @@ export async function setActiveSeason(
   if (!row) throw new Error("Season not found");
 
   const { error: deactivateErr } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .update({ is_active: false })
     .eq("team_id", row.team_id)
     .neq("id", seasonId);
   if (deactivateErr) throw deactivateErr;
 
   const { error: activateErr } = await supabase
-    .from("seasons")
+    .from("rr_seasons")
     .update({ is_active: true })
     .eq("id", seasonId);
   if (activateErr) throw activateErr;
@@ -464,16 +464,16 @@ export async function deleteSeason(
 ): Promise<void> {
   // Detach any games / players first so the FK doesn't block the delete.
   const { error: gErr } = await supabase
-    .from("games")
+    .from("rr_games")
     .update({ season_id: null })
     .eq("season_id", seasonId);
   if (gErr) throw gErr;
   const { error: pErr } = await supabase
-    .from("players")
+    .from("rr_players")
     .delete()
     .eq("season_id", seasonId);
   if (pErr) throw pErr;
-  const { error } = await supabase.from("seasons").delete().eq("id", seasonId);
+  const { error } = await supabase.from("rr_seasons").delete().eq("id", seasonId);
   if (error) throw error;
 }
 
@@ -490,7 +490,7 @@ export async function getPlayers(
   seasonId?: string | null,
 ): Promise<Player[]> {
   let query = supabase
-    .from("players")
+    .from("rr_players")
     .select(PLAYER_SELECT)
     .eq("team_id", teamId)
     .order("number", { ascending: true });
@@ -507,7 +507,7 @@ export async function getPlayer(
   playerId: string,
 ): Promise<Player | null> {
   const { data, error } = await supabase
-    .from("players")
+    .from("rr_players")
     .select(PLAYER_SELECT)
     .eq("id", playerId)
     .maybeSingle();
@@ -562,7 +562,7 @@ export async function createPlayer(
   }
 
   const { data, error } = await supabase
-    .from("players")
+    .from("rr_players")
     .insert({
       team_id: teamId,
       season_id: seasonId,
@@ -594,7 +594,7 @@ export async function updatePlayer(
     notes?: string | null;
   },
 ) {
-  const { error } = await supabase.from("players").update(patch).eq("id", id);
+  const { error } = await supabase.from("rr_players").update(patch).eq("id", id);
   if (error) throw error;
 
   // Name and grad year belong to the athlete: keep the athlete and the same
@@ -605,7 +605,7 @@ export async function updatePlayer(
   if (Object.keys(shared).length === 0) return;
 
   const { data: row, error: rowErr } = await supabase
-    .from("players")
+    .from("rr_players")
     .select("athlete_id")
     .eq("id", id)
     .maybeSingle();
@@ -614,12 +614,12 @@ export async function updatePlayer(
   if (!athleteId) return;
 
   const { error: aErr } = await supabase
-    .from("school_athletes")
+    .from("rr_athletes")
     .update(shared)
     .eq("id", athleteId);
   if (aErr) throw aErr;
   const { error: sErr } = await supabase
-    .from("players")
+    .from("rr_players")
     .update(shared)
     .eq("athlete_id", athleteId)
     .neq("id", id);
@@ -692,7 +692,7 @@ export async function applyRosterImport(
 }
 
 export async function deletePlayer(supabase: SupabaseClient, id: string) {
-  const { error } = await supabase.from("players").delete().eq("id", id);
+  const { error } = await supabase.from("rr_players").delete().eq("id", id);
   if (error) throw error;
 }
 
@@ -709,7 +709,7 @@ export async function getGames(
   seasonId?: string | null,
 ): Promise<Game[]> {
   let query = supabase
-    .from("games")
+    .from("rr_games")
     .select(GAME_SELECT)
     .eq("team_id", teamId)
     .order("game_date", { ascending: false });
@@ -726,7 +726,7 @@ export async function getGame(
   gameId: string,
 ): Promise<Game | null> {
   const { data, error } = await supabase
-    .from("games")
+    .from("rr_games")
     .select(GAME_SELECT)
     .eq("id", gameId)
     .maybeSingle();
@@ -743,7 +743,7 @@ export async function createGame(
   initialState: GameState,
 ): Promise<Game> {
   const { data, error } = await supabase
-    .from("games")
+    .from("rr_games")
     .insert({
       team_id: teamId,
       season_id: seasonId,
@@ -767,7 +767,7 @@ export async function saveGameState(
   const status = state.completed ? "completed" : "in_progress";
   const result = state.completed ? state.result ?? null : null;
   const { error } = await supabase
-    .from("games")
+    .from("rr_games")
     .update({
       game_data: state,
       status,
@@ -782,7 +782,7 @@ export async function deleteGame(
   supabase: SupabaseClient,
   gameId: string,
 ): Promise<void> {
-  const { error } = await supabase.from("games").delete().eq("id", gameId);
+  const { error } = await supabase.from("rr_games").delete().eq("id", gameId);
   if (error) throw error;
 }
 
@@ -794,7 +794,7 @@ const UUID_RE =
 /**
  * Read the narrow scoreboard projection for a public overlay token.
  *
- * Callable with the anon key: get_overlay_scoreboard is SECURITY DEFINER and
+ * Callable with the anon key: rr_get_overlay_scoreboard is SECURITY DEFINER and
  * the token match is the authorization check. Returns null for an unknown or
  * malformed token so callers can 404 without leaking which games exist.
  */
@@ -805,7 +805,7 @@ export async function getOverlayScoreboard(
   // Guard before the round trip: Postgres errors on an invalid uuid cast.
   if (!UUID_RE.test(token)) return null;
 
-  const { data, error } = await supabase.rpc("get_overlay_scoreboard", {
+  const { data, error } = await supabase.rpc("rr_get_overlay_scoreboard", {
     p_token: token,
   });
   if (error) throw error;
@@ -821,7 +821,7 @@ export async function rotateOverlayToken(
 ): Promise<string> {
   const token = crypto.randomUUID();
   const { error } = await supabase
-    .from("games")
+    .from("rr_games")
     .update({ overlay_token: token })
     .eq("id", gameId);
   if (error) throw error;
