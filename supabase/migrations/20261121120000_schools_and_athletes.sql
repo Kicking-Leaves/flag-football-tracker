@@ -37,9 +37,12 @@ alter table public.teams
 
 create index teams_school_id_idx on public.teams (school_id);
 
--- ---------- athletes ----------
+-- ---------- school_athletes ----------
+--
+-- Named school_athletes, not athletes: this Supabase project already has an
+-- unrelated public.athletes table owned by another app.
 
-create table public.athletes (
+create table public.school_athletes (
   id               uuid primary key default gen_random_uuid(),
   school_id        uuid not null references public.schools (id) on delete cascade,
   name             text not null check (length(trim(name)) > 0),
@@ -47,30 +50,30 @@ create table public.athletes (
   created_at       timestamptz not null default now()
 );
 
-create index athletes_school_id_idx on public.athletes (school_id);
+create index school_athletes_school_id_idx on public.school_athletes (school_id);
 
-alter table public.athletes enable row level security;
+alter table public.school_athletes enable row level security;
 
-create policy "athletes: school owner full access"
-  on public.athletes
+create policy "school_athletes: school owner full access"
+  on public.school_athletes
   for all
   using (
     exists (
       select 1 from public.schools s
-      where s.id = athletes.school_id and s.owner_id = auth.uid()
+      where s.id = school_athletes.school_id and s.owner_id = auth.uid()
     )
   )
   with check (
     exists (
       select 1 from public.schools s
-      where s.id = athletes.school_id and s.owner_id = auth.uid()
+      where s.id = school_athletes.school_id and s.owner_id = auth.uid()
     )
   );
 
 -- ---------- players.athlete_id ----------
 
 alter table public.players
-  add column athlete_id uuid references public.athletes (id) on delete set null;
+  add column athlete_id uuid references public.school_athletes (id) on delete set null;
 
 create index players_athlete_id_idx on public.players (athlete_id);
 
@@ -89,7 +92,7 @@ begin
   if not exists (
     select 1
     from public.teams t
-    join public.athletes a on a.school_id = t.school_id
+    join public.school_athletes a on a.school_id = t.school_id
     where t.id = new.team_id and a.id = new.athlete_id
   ) then
     raise exception 'athlete % does not belong to the school of team %',

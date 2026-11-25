@@ -282,7 +282,7 @@ export async function getAthletes(
   schoolId: string,
 ): Promise<Athlete[]> {
   const { data, error } = await supabase
-    .from("athletes")
+    .from("school_athletes")
     .select(ATHLETE_SELECT)
     .eq("school_id", schoolId)
     .order("name", { ascending: true });
@@ -297,7 +297,7 @@ export async function createAthlete(
   graduationYear: number | null,
 ): Promise<Athlete> {
   const { data, error } = await supabase
-    .from("athletes")
+    .from("school_athletes")
     .insert({ school_id: schoolId, name, graduation_year: graduationYear })
     .select(ATHLETE_SELECT)
     .single();
@@ -614,7 +614,7 @@ export async function updatePlayer(
   if (!athleteId) return;
 
   const { error: aErr } = await supabase
-    .from("athletes")
+    .from("school_athletes")
     .update(shared)
     .eq("id", athleteId);
   if (aErr) throw aErr;
