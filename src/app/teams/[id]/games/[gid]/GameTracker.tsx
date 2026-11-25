@@ -24,6 +24,8 @@ interface GameTrackerProps {
   gameDate: string;
   overlayToken: string | null;
   initialState: GameState;
+  /** Admins and coaches can delete games; stat keepers can't. */
+  canDelete: boolean;
 }
 
 type Mode = "normal" | "pointAfter" | "penalty";
@@ -35,6 +37,7 @@ export default function GameTracker({
   opponentName,
   overlayToken,
   initialState,
+  canDelete,
 }: GameTrackerProps) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -170,6 +173,17 @@ export default function GameTracker({
             >
               View Stats →
             </Link>
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm("Reopen this game to correct plays? End the game again when you're done.")) {
+                  game.reopenGame();
+                }
+              }}
+              className="mt-4 block w-full text-sm font-semibold text-gray-600 underline"
+            >
+              Reopen game to edit stats
+            </button>
           </div>
         ) : (
           <>
@@ -351,16 +365,18 @@ export default function GameTracker({
                 </div>
               </div>
               {overlayToken && <OverlayLink token={overlayToken} />}
-              <button
-                type="button"
-                onClick={() => {
-                  setShowSettings(false);
-                  setShowDeleteConfirm(true);
-                }}
-                className="w-full rounded-xl bg-red-100 py-3 font-bold text-red-700"
-              >
-                Delete this game
-              </button>
+              {canDelete && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSettings(false);
+                    setShowDeleteConfirm(true);
+                  }}
+                  className="w-full rounded-xl bg-red-100 py-3 font-bold text-red-700"
+                >
+                  Delete this game
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setShowSettings(false)}
@@ -373,7 +389,7 @@ export default function GameTracker({
         </div>
       )}
 
-      {showDeleteConfirm && (
+      {canDelete && showDeleteConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
             <h3 className="mb-4 text-2xl font-bold text-red-600">

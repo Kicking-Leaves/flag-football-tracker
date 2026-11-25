@@ -28,6 +28,7 @@ export type GameAction =
   | { type: "HANDLE_OT_CONVERSION"; payload: OTConversionData }
   | { type: "TRIGGER_OT_SETUP" }
   | { type: "MARK_COMPLETED" }
+  | { type: "REOPEN_GAME" }
   | {
       type: "ADJUST_SCORE";
       payload: { team: Possession; amount: number };
@@ -59,6 +60,8 @@ function reducer(state: GameState, action: GameAction): GameState {
       return engine.triggerOvertimeSetup(state);
     case "MARK_COMPLETED":
       return engine.markGameCompleted(state);
+    case "REOPEN_GAME":
+      return engine.reopenGame(state);
     case "ADJUST_SCORE":
       return engine.adjustScore(
         state,
@@ -145,6 +148,10 @@ export function useGameReducer(
     () => dispatch({ type: "MARK_COMPLETED" }),
     [],
   );
+  const reopenGame = useCallback(
+    () => dispatch({ type: "REOPEN_GAME" }),
+    [],
+  );
   const adjustScore = useCallback(
     (team: Possession, amount: number) =>
       dispatch({ type: "ADJUST_SCORE", payload: { team, amount } }),
@@ -171,6 +178,7 @@ export function useGameReducer(
     handleOTConversion,
     triggerOTSetup,
     markCompleted,
+    reopenGame,
     adjustScore,
     undoLastPlay,
     loadGame,

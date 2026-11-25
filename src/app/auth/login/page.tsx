@@ -1,9 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { safeNextPath } from "@/lib/permissions";
+
+const noopSubscribe = () => () => {};
+
+/**
+ * Where to go after signing in, from ?next= (same-site paths only). Read from
+ * window.location so the page needn't suspend on useSearchParams; "/" during
+ * server render.
+ */
+function useNextPath(): string {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => safeNextPath(new URLSearchParams(window.location.search).get("next")),
+    () => "/",
+  );
+}
+
+function withNext(path: string, next: string): string {
+  return next === "/" ? path : `${path}?next=${encodeURIComponent(next)}`;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -11,6 +31,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const next = useNextPath();
 
   async function handleEmailLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -29,7 +50,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/");
+    router.push(next);
     router.refresh();
   }
 
@@ -39,7 +60,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}${withNext("/auth/callback", next)}`,
       },
     });
     if (error) setError(error.message);
@@ -102,7 +123,7 @@ export default function LoginPage() {
 
         <p className="text-center text-sm text-gray-500">
           No account?{" "}
-          <Link href="/auth/register" className="underline">
+          <Link href={withNext("/auth/register", next)} className="underline">
             Sign up
           </Link>
         </p>

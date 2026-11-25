@@ -4,11 +4,14 @@ import { createClient } from "@/lib/supabase/server";
 import {
   computeSeasonStats,
   getGames,
+  getMyTeamRole,
   getSchools,
   getSeasons,
   getTeam,
 } from "@/lib/db";
 import type { Season } from "@/lib/types";
+import { ROLE_LABELS, can } from "@/lib/permissions";
+import LeaveTeamButton from "./LeaveTeamButton";
 import NewSeasonForm from "./NewSeasonForm";
 import SeasonRowActions from "./SeasonRowActions";
 import SchoolPicker from "./SchoolPicker";
@@ -27,12 +30,16 @@ export default async function TeamDashboardPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
 
-  const team = await getTeam(supabase, id);
-  if (!team) notFound();
+  const [team, role] = await Promise.all([
+    getTeam(supabase, id),
+    getMyTeamRole(supabase, id, user.id),
+  ]);
+  if (!team || !role) notFound();
+  const isStaff = can(role, "manageTeam");
 
   const [seasons, schools] = await Promise.all([
     getSeasons(supabase, id),
-    getSchools(supabase),
+    isStaff ? getSchools(supabase) : Promise.resolve([]),
   ]);
 
   // For each season compute its record in parallel.
@@ -57,27 +64,42 @@ export default async function TeamDashboardPage({
           </Link>
           <h1 className="mt-2 text-3xl font-bold">{team.name}</h1>
           <p className="mt-1 text-sm text-green-100">
-            {seasons.length} {seasons.length === 1 ? "season" : "seasons"}
+            {seasons.length} {seasons.length === 1 ? "season" : "seasons"} ·
+            Your role: {ROLE_LABELS[role]}
           </p>
+          {can(role, "manageMembers") && (
+            <Link
+              href={`/teams/${id}/members`}
+              className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-bold text-green-700 shadow"
+            >
+              Members & invites
+            </Link>
+          )}
         </div>
 
-        <SchoolPicker
-          teamId={id}
-          schools={schools}
-          currentSchoolId={team.school_id ?? null}
-        />
+        {isStaff && (
+          <SchoolPicker
+            teamId={id}
+            schools={schools}
+            currentSchoolId={team.school_id ?? null}
+          />
+        )}
 
         <section className="mb-6">
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-xl font-bold text-gray-800">Seasons</h2>
           </div>
 
-          <NewSeasonForm teamId={id} existingYears={seasons.map((s) => s)} />
+          {isStaff && (
+            <NewSeasonForm teamId={id} existingYears={seasons.map((s) => s)} />
+          )}
 
           {seasonCards.length === 0 ? (
             <div className="mt-4 rounded-xl bg-white p-8 text-center shadow">
               <p className="text-gray-500">
-                No seasons yet. Create one above to start tracking games.
+                {isStaff
+                  ? "No seasons yet. Create one above to start tracking games."
+                  : "No seasons yet."}
               </p>
             </div>
           ) : (
@@ -92,6 +114,7 @@ export default async function TeamDashboardPage({
                   ties={stats.ties}
                   gamesPlayed={stats.gamesPlayed}
                   totalGames={totalGames}
+                  canManage={isStaff}
                 />
               ))}
             </ul>
@@ -110,6 +133,12 @@ export default async function TeamDashboardPage({
             </p>
           </section>
         )}
+
+        {!can(role, "manageMembers") && (
+          <div className="mt-8 text-center">
+            <LeaveTeamButton teamId={id} userId={user.id} />
+          </div>
+        )}
       </div>
     </main>
   );
@@ -123,6 +152,7 @@ interface SeasonCardProps {
   ties: number;
   gamesPlayed: number;
   totalGames: number;
+  canManage: boolean;
 }
 
 function SeasonCard({
@@ -133,6 +163,7 @@ function SeasonCard({
   ties,
   gamesPlayed,
   totalGames,
+  canManage,
 }: SeasonCardProps) {
   const record =
     gamesPlayed > 0
@@ -168,7 +199,7 @@ function SeasonCard({
           )}
         </div>
       </Link>
-      {!season.is_active && (
+      {canManage && !season.is_active && (
         <div className="border-t border-gray-100 bg-gray-50 px-5 py-2">
           <SeasonRowActions seasonId={season.id} teamId={teamId} />
         </div>

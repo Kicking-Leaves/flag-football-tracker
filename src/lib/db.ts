@@ -21,9 +21,10 @@ import { seasonDisplayName } from "./types";
 import type { OverlayScoreboardRow } from "./scorebug";
 import { normalizeName, type PlannedRosterRow } from "./roster-import";
 import { makeEmptyPlayerStats } from "./game-engine";
+import { isTeamRole, type TeamRole } from "./permissions";
 
 const PLAYER_SELECT =
-  "id, team_id, season_id, athlete_id, name, number, active, graduation_year, position_offense, position_defense, notes, created_at";
+  "id, team_id, season_id, athlete_id, name, number, active, graduation_year, position_offense, position_defense, created_at";
 
 const TEAM_SELECT = "id, owner_id, name, school_id, created_at";
 const SCHOOL_SELECT = "id, owner_id, name, created_at";
@@ -31,6 +32,9 @@ const ATHLETE_SELECT = "id, school_id, name, graduation_year, created_at";
 
 const GAME_SELECT =
   "id, team_id, season_id, opponent_name, game_date, status, result, game_data, overlay_token, created_at, updated_at";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SEASON_SELECT = "id, team_id, year, term, is_active, created_at";
 
@@ -112,20 +116,12 @@ export async function createTeam(
   supabase: SupabaseClient,
   name: string,
 ): Promise<Team> {
-  const {
-    data: { user },
-    error: authErr,
-  } = await supabase.auth.getUser();
-  if (authErr) throw authErr;
-  if (!user) throw new Error("Not authenticated");
-
-  const { data, error } = await supabase
-    .from("rr_teams")
-    .insert({ owner_id: user.id, name })
-    .select(TEAM_SELECT)
-    .single();
+  // Creates the team and makes the caller its admin in one step.
+  const { data: id, error } = await supabase.rpc("rr_create_team", { p_name: name });
   if (error) throw error;
-  return data;
+  const team = await getTeam(supabase, id as string);
+  if (!team) throw new Error("Team was created but could not be loaded.");
+  return team;
 }
 
 export async function updateTeam(
@@ -157,6 +153,180 @@ export async function deleteTeam(
   if (sErr) throw sErr;
   const { error } = await supabase.from("rr_teams").delete().eq("id", id);
   if (error) throw error;
+}
+
+// ---------- Members, roles & invites ----------
+
+/** The signed-in user's role on a team, or null if they aren't a member. */
+export async function getMyTeamRole(
+  supabase: SupabaseClient,
+  teamId: string,
+  userId: string,
+): Promise<TeamRole | null> {
+  const { data, error } = await supabase
+    .from("rr_team_members")
+    .select("role")
+    .eq("team_id", teamId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw error;
+  const role = (data as { role: string } | null)?.role;
+  return isTeamRole(role) ? role : null;
+}
+
+/** The signed-in user's role on every team they belong to, by team id. */
+export async function getMyTeamRoles(
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<Map<string, TeamRole>> {
+  const { data, error } = await supabase
+    .from("rr_team_members")
+    .select("team_id, role")
+    .eq("user_id", userId);
+  if (error) throw error;
+  const roles = new Map<string, TeamRole>();
+  for (const row of (data ?? []) as { team_id: string; role: string }[]) {
+    if (isTeamRole(row.role)) roles.set(row.team_id, row.role);
+  }
+  return roles;
+}
+
+export interface TeamMember {
+  user_id: string;
+  email: string;
+  role: TeamRole;
+  created_at: string;
+}
+
+/** Everyone on the team with their sign-in email (admins and coaches only). */
+export async function getTeamMembers(
+  supabase: SupabaseClient,
+  teamId: string,
+): Promise<TeamMember[]> {
+  const { data, error } = await supabase.rpc("rr_team_member_list", { p_team: teamId });
+  if (error) throw error;
+  return ((data ?? []) as TeamMember[]).filter((m) => isTeamRole(m.role));
+}
+
+export async function setMemberRole(
+  supabase: SupabaseClient,
+  teamId: string,
+  userId: string,
+  role: TeamRole,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("rr_team_members")
+    .update({ role })
+    .eq("team_id", teamId)
+    .eq("user_id", userId)
+    .select("user_id");
+  if (error) throw error;
+  if (!data?.length) throw new Error("You don't have permission to change that member.");
+}
+
+/** Remove a member, or leave the team when userId is your own. */
+export async function removeMember(
+  supabase: SupabaseClient,
+  teamId: string,
+  userId: string,
+): Promise<void> {
+  const { data, error } = await supabase
+    .from("rr_team_members")
+    .delete()
+    .eq("team_id", teamId)
+    .eq("user_id", userId)
+    .select("user_id");
+  if (error) throw error;
+  if (!data?.length) throw new Error("You don't have permission to remove that member.");
+}
+
+export interface TeamInvite {
+  id: string;
+  team_id: string;
+  role: TeamRole;
+  single_use: boolean;
+  used_count: number;
+  created_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
+const INVITE_SELECT =
+  "id, team_id, role, single_use, used_count, created_at, expires_at, revoked_at";
+
+/** Invite links that can still be used, newest first. */
+export async function getActiveInvites(
+  supabase: SupabaseClient,
+  teamId: string,
+): Promise<TeamInvite[]> {
+  const { data, error } = await supabase
+    .from("rr_team_invites")
+    .select(INVITE_SELECT)
+    .eq("team_id", teamId)
+    .is("revoked_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return ((data ?? []) as TeamInvite[]).filter(
+    (i) => !(i.single_use && i.used_count > 0),
+  );
+}
+
+export async function createInvite(
+  supabase: SupabaseClient,
+  teamId: string,
+  role: TeamRole,
+  singleUse: boolean,
+): Promise<TeamInvite> {
+  const { data, error } = await supabase
+    .from("rr_team_invites")
+    .insert({ team_id: teamId, role, single_use: singleUse })
+    .select(INVITE_SELECT)
+    .single();
+  if (error) throw error;
+  return data as TeamInvite;
+}
+
+export async function revokeInvite(
+  supabase: SupabaseClient,
+  inviteId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("rr_team_invites")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", inviteId);
+  if (error) throw error;
+}
+
+export type InviteStatus = "valid" | "used" | "expired" | "revoked";
+
+export interface InviteSummary {
+  team_id: string;
+  team_name: string;
+  role: TeamRole;
+  status: InviteStatus;
+}
+
+/** What an invite link is for. Works signed out; null for an unknown link. */
+export async function getInviteSummary(
+  supabase: SupabaseClient,
+  inviteId: string,
+): Promise<InviteSummary | null> {
+  if (!UUID_RE.test(inviteId)) return null;
+  const { data, error } = await supabase.rpc("rr_get_invite", { p_invite: inviteId });
+  if (error) throw error;
+  const row = ((data ?? []) as InviteSummary[])[0];
+  return row && isTeamRole(row.role) ? row : null;
+}
+
+/** Join the invite's team; returns its id. Existing members keep their role. */
+export async function acceptInvite(
+  supabase: SupabaseClient,
+  inviteId: string,
+): Promise<string> {
+  const { data, error } = await supabase.rpc("rr_accept_invite", { p_invite: inviteId });
+  if (error) throw error;
+  return data as string;
 }
 
 // ---------- Schools & athletes ----------
@@ -499,7 +669,48 @@ export async function getPlayers(
   }
   const { data, error } = await query;
   if (error) throw error;
-  return (data ?? []) as Player[];
+  return attachNotes(supabase, (data ?? []) as Player[]);
+}
+
+/**
+ * Merge coach notes into roster rows. Notes live in rr_player_notes, which only
+ * admins and coaches can read, so for everyone else this is a no-op.
+ */
+async function attachNotes(
+  supabase: SupabaseClient,
+  players: Player[],
+): Promise<Player[]> {
+  if (players.length === 0) return players;
+  const { data, error } = await supabase
+    .from("rr_player_notes")
+    .select("player_id, notes")
+    .in(
+      "player_id",
+      players.map((p) => p.id),
+    );
+  if (error) throw error;
+  const notes = new Map(
+    ((data ?? []) as { player_id: string; notes: string }[]).map((n) => [
+      n.player_id,
+      n.notes,
+    ]),
+  );
+  return players.map((p) => ({ ...p, notes: notes.get(p.id) ?? null }));
+}
+
+/** Save or clear a player's coach notes. */
+async function setPlayerNotes(
+  supabase: SupabaseClient,
+  playerId: string,
+  notes: string | null | undefined,
+): Promise<void> {
+  const text = notes?.trim() ?? "";
+  const { error } = text
+    ? await supabase
+        .from("rr_player_notes")
+        .upsert({ player_id: playerId, notes: text, updated_at: new Date().toISOString() })
+    : await supabase.from("rr_player_notes").delete().eq("player_id", playerId);
+  if (error) throw error;
 }
 
 export async function getPlayer(
@@ -512,7 +723,8 @@ export async function getPlayer(
     .eq("id", playerId)
     .maybeSingle();
   if (error) throw error;
-  return (data as Player) ?? null;
+  if (!data) return null;
+  return (await attachNotes(supabase, [data as Player]))[0];
 }
 
 /** Extra profile fields accepted by createPlayer / updatePlayer. */
@@ -573,12 +785,16 @@ export async function createPlayer(
       graduation_year: profile.graduation_year ?? null,
       position_offense: profile.position_offense ?? null,
       position_defense: profile.position_defense ?? null,
-      notes: profile.notes ?? null,
     })
     .select(PLAYER_SELECT)
     .single();
   if (error) throw error;
-  return data as Player;
+  const player = data as Player;
+  if (profile.notes?.trim()) {
+    await setPlayerNotes(supabase, player.id, profile.notes);
+    player.notes = profile.notes.trim();
+  }
+  return player;
 }
 
 export async function updatePlayer(
@@ -594,8 +810,12 @@ export async function updatePlayer(
     notes?: string | null;
   },
 ) {
-  const { error } = await supabase.from("rr_players").update(patch).eq("id", id);
-  if (error) throw error;
+  const { notes, ...rosterPatch } = patch;
+  if (Object.keys(rosterPatch).length > 0) {
+    const { error } = await supabase.from("rr_players").update(rosterPatch).eq("id", id);
+    if (error) throw error;
+  }
+  if (notes !== undefined) await setPlayerNotes(supabase, id, notes);
 
   // Name and grad year belong to the athlete: keep the athlete and the same
   // athlete's roster entries on other teams/seasons in step.
@@ -788,8 +1008,6 @@ export async function deleteGame(
 
 // ---------- Public stream overlay ----------
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Read the narrow scoreboard projection for a public overlay token.

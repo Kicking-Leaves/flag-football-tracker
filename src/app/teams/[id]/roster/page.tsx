@@ -9,6 +9,7 @@ import {
   deletePlayer,
   getActiveSeason,
   getAthletes,
+  getMyTeamRole,
   getPlayers,
   getRosterEntriesForAthletes,
   getSchool,
@@ -22,6 +23,7 @@ import type { Athlete, Player, School, Season } from "@/lib/types";
 import RosterImport from "@/components/roster/RosterImport";
 import AddFromSchool from "@/components/roster/AddFromSchool";
 import { DEFENSE_POSITIONS, OFFENSE_POSITIONS } from "@/lib/types";
+import { can, type TeamRole } from "@/lib/permissions";
 
 // ---------- helpers ----------
 
@@ -97,6 +99,25 @@ export default function RosterPage({
   const [school, setSchool] = useState<School | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [schoolEntries, setSchoolEntries] = useState<RosterEntryWithTeam[]>([]);
+
+  // The viewer's role; only admins and coaches can change the roster.
+  const [role, setRole] = useState<TeamRole | null>(null);
+  const canEdit = can(role, "manageRoster");
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+      const r = await getMyTeamRole(supabase, teamId, user.id).catch(() => null);
+      if (!cancelled) setRole(r);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teamId]);
 
   // Copy-from-previous state
   const [copying, setCopying] = useState(false);
@@ -412,7 +433,7 @@ export default function RosterPage({
           </p>
         </div>
 
-        {otherSeasons.length > 0 && players.length === 0 && !loading && (
+        {canEdit && otherSeasons.length > 0 && players.length === 0 && !loading && (
           <div className="mb-4 rounded-2xl bg-yellow-50 p-4 shadow">
             <p className="text-sm font-bold text-yellow-900">
               Empty roster — copy from a previous season?
@@ -435,7 +456,7 @@ export default function RosterPage({
           </div>
         )}
 
-        {season && (
+        {canEdit && season && (
           <RosterImport
             teamId={teamId}
             seasonId={season.id}
@@ -448,7 +469,7 @@ export default function RosterPage({
           />
         )}
 
-        {season && school && (
+        {canEdit && season && school && (
           <AddFromSchool
             teamId={teamId}
             seasonId={season.id}
@@ -460,6 +481,7 @@ export default function RosterPage({
           />
         )}
 
+        {canEdit && (
         <form
           onSubmit={handleAdd}
           className="mb-4 rounded-2xl bg-white p-5 shadow-xl"
@@ -483,13 +505,17 @@ export default function RosterPage({
           </button>
           {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
         </form>
+        )}
+        {!canEdit && error && (
+          <p className="mb-4 text-sm text-red-600">{error}</p>
+        )}
 
         <div className="rounded-2xl bg-white p-5 shadow-xl">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-bold text-gray-800">
               Roster ({players.length})
             </h2>
-            {otherSeasons.length > 0 && players.length > 0 && (
+            {canEdit && otherSeasons.length > 0 && players.length > 0 && (
               <button
                 type="button"
                 onClick={handleCopyFromPrevious}
@@ -586,6 +612,7 @@ export default function RosterPage({
                           </div>
                         )}
                       </Link>
+                      {canEdit && (
                       <div className="flex flex-shrink-0 flex-wrap justify-end gap-2">
                         <button
                           type="button"
@@ -610,6 +637,7 @@ export default function RosterPage({
                           Delete
                         </button>
                       </div>
+                      )}
                     </div>
                   </li>
                 ),

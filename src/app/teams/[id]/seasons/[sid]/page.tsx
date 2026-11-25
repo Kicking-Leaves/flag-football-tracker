@@ -4,10 +4,12 @@ import { createClient } from "@/lib/supabase/server";
 import {
   computeSeasonStats,
   getGames,
+  getMyTeamRole,
   getPlayers,
   getSeason,
   getTeam,
 } from "@/lib/db";
+import { can } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +25,14 @@ export default async function SeasonDetailPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
 
-  const [team, season] = await Promise.all([
+  const [team, season, role] = await Promise.all([
     getTeam(supabase, teamId),
     getSeason(supabase, seasonId),
+    getMyTeamRole(supabase, teamId, user.id),
   ]);
-  if (!team || !season) notFound();
+  if (!team || !season || !role) notFound();
+  const canCreate = can(role, "createGame");
+  const canScore = can(role, "scoreGame");
   if (season.team_id !== teamId) notFound();
 
   const [players, games] = await Promise.all([
@@ -64,19 +69,21 @@ export default async function SeasonDetailPage({
               games
             </p>
           )}
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className={`mt-4 grid gap-3 ${canCreate ? "grid-cols-2" : "grid-cols-1"}`}>
             <Link
               href={`/teams/${teamId}/roster?season=${seasonId}`}
               className="rounded-xl bg-white py-3 text-center font-bold text-green-700 shadow-lg"
             >
               Roster ({players.length})
             </Link>
-            <Link
-              href={`/teams/${teamId}/games/new?season=${seasonId}`}
-              className="rounded-xl bg-yellow-400 py-3 text-center font-bold text-gray-900 shadow-lg"
-            >
-              + New Game
-            </Link>
+            {canCreate && (
+              <Link
+                href={`/teams/${teamId}/games/new?season=${seasonId}`}
+                className="rounded-xl bg-yellow-400 py-3 text-center font-bold text-gray-900 shadow-lg"
+              >
+                + New Game
+              </Link>
+            )}
           </div>
         </div>
 
@@ -108,7 +115,11 @@ export default async function SeasonDetailPage({
               {inProgressGames.map((g) => (
                 <Link
                   key={g.id}
-                  href={`/teams/${teamId}/games/${g.id}`}
+                  href={
+                    canScore
+                      ? `/teams/${teamId}/games/${g.id}`
+                      : `/teams/${teamId}/games/${g.id}/stats`
+                  }
                   className="block rounded-xl bg-white p-5 shadow-lg transition hover:shadow-xl"
                 >
                   <div className="flex items-center justify-between">
@@ -120,7 +131,7 @@ export default async function SeasonDetailPage({
                         vs {g.opponent_name}
                       </p>
                       <p className="mt-1 text-sm text-blue-600">
-                        Tap to resume →
+                        {canScore ? "Tap to resume →" : "Live · tap for stats →"}
                       </p>
                     </div>
                     <p className="text-2xl font-bold">
@@ -140,12 +151,14 @@ export default async function SeasonDetailPage({
           {completedGames.length === 0 && inProgressGames.length === 0 ? (
             <div className="rounded-xl bg-white p-8 text-center shadow">
               <p className="text-gray-500">No games yet this season.</p>
-              <Link
-                href={`/teams/${teamId}/games/new?season=${seasonId}`}
-                className="mt-3 inline-block rounded-lg bg-yellow-400 px-4 py-2 text-sm font-bold text-gray-900"
-              >
-                + Add the first game
-              </Link>
+              {canCreate && (
+                <Link
+                  href={`/teams/${teamId}/games/new?season=${seasonId}`}
+                  className="mt-3 inline-block rounded-lg bg-yellow-400 px-4 py-2 text-sm font-bold text-gray-900"
+                >
+                  + Add the first game
+                </Link>
+              )}
             </div>
           ) : completedGames.length === 0 ? null : (
             <div className="space-y-3">

@@ -7,12 +7,14 @@ import { createClient } from "@/lib/supabase/client";
 import {
   createGame,
   getActiveSeason,
+  getMyTeamRole,
   getPlayers,
   getSeasons,
   getTeam,
 } from "@/lib/db";
 import { makeInitialGameState } from "@/lib/game-engine";
 import type { Player, Possession, Season } from "@/lib/types";
+import { can } from "@/lib/permissions";
 
 export default function NewGamePage({
   params,
@@ -46,10 +48,19 @@ export default function NewGamePage({
   const loadShell = useCallback(async () => {
     setLoading(true);
     try {
-      const [team, list] = await Promise.all([
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const [team, list, role] = await Promise.all([
         getTeam(supabase, teamId),
         getSeasons(supabase, teamId),
+        user ? getMyTeamRole(supabase, teamId, user.id) : Promise.resolve(null),
       ]);
+      // Only admins, coaches and stat keepers create games.
+      if (!can(role, "createGame")) {
+        router.replace(`/teams/${teamId}`);
+        return;
+      }
       if (team) setTeamName(team.name);
       setSeasons(list);
       if (!seasonId) {
