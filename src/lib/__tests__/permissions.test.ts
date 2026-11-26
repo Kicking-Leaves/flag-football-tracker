@@ -4,6 +4,7 @@ import {
   assignableRoles,
   can,
   canManageMember,
+  emailRedirectPath,
   isTeamRole,
   safeNextPath,
   type Capability,
@@ -99,5 +100,26 @@ describe("reopenGame", () => {
     expect(reopened.completed).toBe(false);
     expect(reopened.result).toBeUndefined();
     expect(done.completed).toBe(true); // input not mutated
+  });
+});
+
+describe("emailRedirectPath", () => {
+  const origin = "https://routerunnr.kickingleaves.com";
+
+  it("unwraps the callback address the app asks Supabase for", () => {
+    expect(emailRedirectPath(`${origin}/auth/callback?next=%2Finvite%2Fabc`, origin)).toBe("/invite/abc");
+    expect(emailRedirectPath(`${origin}/auth/callback?next=/invite/abc`, origin)).toBe("/invite/abc");
+    expect(emailRedirectPath(`${origin}/auth/callback`, origin)).toBe("/");
+  });
+
+  it("keeps other same-site addresses", () => {
+    expect(emailRedirectPath(`${origin}/teams/1?season=2`, origin)).toBe("/teams/1?season=2");
+    expect(emailRedirectPath(origin, origin)).toBe("/");
+  });
+
+  it("falls back for missing or off-site addresses", () => {
+    for (const bad of [null, "", "https://evil.com/x", `${origin}/auth/callback?next=//evil.com`, "http://localhost:3000"]) {
+      expect(emailRedirectPath(bad, origin)).toBe("/");
+    }
   });
 });

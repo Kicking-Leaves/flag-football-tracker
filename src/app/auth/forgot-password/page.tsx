@@ -15,8 +15,9 @@ export default function ForgotPasswordPage() {
     setError(null);
     setLoading(true);
 
-    // The emailed link goes through /auth/callback (which signs the user in
-    // with a one-time code) and then on to the page for choosing a password.
+    // The email template links to /auth/confirm, which signs the user in and
+    // sends them to /auth/reset-password. redirectTo is a fallback for the
+    // stock template (via supabase.co and /auth/callback).
     const { error } = await createClient().auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent("/auth/reset-password")}`,
     });
@@ -45,7 +46,7 @@ export default function ForgotPasswordPage() {
               If there&apos;s an account for <strong>{email}</strong>, a reset link is on
               its way from Kicking Leaves.
             </p>
-            <p>Open the link on this device and in this browser. It works once.</p>
+            <p>The link works once. If it doesn&apos;t arrive in a few minutes, check your spam folder.</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-3">

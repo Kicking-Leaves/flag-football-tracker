@@ -56,8 +56,7 @@ export default function ResetPasswordPage() {
         {signedIn === false && (
           <div className="space-y-3 text-sm">
             <p className="rounded bg-yellow-50 p-4 text-yellow-900">
-              This reset link has expired or was already used. Links only work once, on the
-              device and browser where you asked for them.
+              This reset link has expired or was already used. Each link only works once.
             </p>
             <Link href="/auth/forgot-password" className="block text-center underline">
               Send a new link

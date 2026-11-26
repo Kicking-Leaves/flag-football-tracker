@@ -93,3 +93,27 @@ export function safeNextPath(next: string | null | undefined, fallback = "/"): s
   }
   return next;
 }
+
+/**
+ * Turns the redirect address Supabase puts in an email link ({{ .RedirectTo }})
+ * into a same-site path. The app asks for `<origin>/auth/callback?next=/x`, so
+ * that wrapper is unwrapped to `/x`. Anything on another site becomes fallback.
+ */
+export function emailRedirectPath(
+  redirectTo: string | null | undefined,
+  origin: string,
+  fallback = "/",
+): string {
+  if (!redirectTo) return fallback;
+  let url: URL;
+  try {
+    url = new URL(redirectTo, origin);
+  } catch {
+    return fallback;
+  }
+  if (url.origin !== origin) return fallback;
+  if (url.pathname === "/auth/callback") {
+    return safeNextPath(url.searchParams.get("next"), fallback);
+  }
+  return safeNextPath(url.pathname + url.search, fallback);
+}
