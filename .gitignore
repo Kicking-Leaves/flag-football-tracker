@@ -45,3 +45,6 @@ next-env.d.ts
 /mobile/.expo
 /mobile/dist
 /mobile/web-build
+
+# Supabase CLI local state
+supabase/.temp/
