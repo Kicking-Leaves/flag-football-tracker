@@ -17,5 +17,10 @@ export async function GET(request: Request) {
     }
   }
 
+  // A failed password-reset link goes back to the reset page, which explains
+  // the link expired and offers a new one.
+  if (next === "/auth/reset-password") {
+    return NextResponse.redirect(`${origin}${next}`);
+  }
   return NextResponse.redirect(`${origin}/auth/login?error=oauth_failed`);
 }
