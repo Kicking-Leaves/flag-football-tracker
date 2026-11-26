@@ -3,6 +3,7 @@
 # dependencies
 /node_modules
 /mobile/node_modules
+/film-worker/node_modules
 /.pnp
 .pnp.*
 .yarn/*
