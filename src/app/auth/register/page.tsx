@@ -1,9 +1,29 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { safeNextPath } from "@/lib/permissions";
+
+const noopSubscribe = () => () => {};
+
+/**
+ * Where to go after signing in, from ?next= (same-site paths only). Read from
+ * window.location so the page needn't suspend on useSearchParams; "/" during
+ * server render.
+ */
+function useNextPath(): string {
+  return useSyncExternalStore(
+    noopSubscribe,
+    () => safeNextPath(new URLSearchParams(window.location.search).get("next")),
+    () => "/",
+  );
+}
+
+function withNext(path: string, next: string): string {
+  return next === "/" ? path : `${path}?next=${encodeURIComponent(next)}`;
+}
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -12,6 +32,7 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const next = useNextPath();
 
   async function handleSignup(e: React.FormEvent) {
     e.preventDefault();
@@ -24,7 +45,7 @@ export default function RegisterPage() {
       email,
       password,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: `${window.location.origin}${withNext("/auth/callback", next)}`,
       },
     });
 
@@ -35,7 +56,7 @@ export default function RegisterPage() {
     }
 
     if (data.session) {
-      router.push("/");
+      router.push(next);
       router.refresh();
       return;
     }
@@ -86,7 +107,7 @@ export default function RegisterPage() {
 
         <p className="text-center text-sm text-gray-500">
           Already have an account?{" "}
-          <Link href="/auth/login" className="underline">
+          <Link href={withNext("/auth/login", next)} className="underline">
             Sign in
           </Link>
         </p>

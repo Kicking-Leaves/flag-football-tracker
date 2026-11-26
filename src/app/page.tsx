@@ -5,8 +5,10 @@ import {
   computeSeasonStats,
   getActiveSeason,
   getGames,
+  getMyTeamRoles,
   getTeams,
 } from "@/lib/db";
+import { ROLE_LABELS } from "@/lib/permissions";
 import LogoutButton from "./logout-button";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +20,10 @@ export default async function Home() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
 
-  const teams = await getTeams(supabase);
+  const [teams, roles] = await Promise.all([
+    getTeams(supabase),
+    getMyTeamRoles(supabase, user.id),
+  ]);
 
   // For each team, pull the active season's games to surface a record summary.
   // Teams with no active season fall back to "all games" so legacy rows still
@@ -28,7 +33,7 @@ export default async function Home() {
       const active = await getActiveSeason(supabase, t.id);
       const games = await getGames(supabase, t.id, active?.id ?? null);
       const season = computeSeasonStats(games);
-      return { team: t, activeSeason: active, season };
+      return { team: t, activeSeason: active, season, role: roles.get(t.id) ?? null };
     }),
   );
 
@@ -63,12 +68,13 @@ export default async function Home() {
         {teamCards.length === 0 ? (
           <div className="rounded-xl bg-white p-12 text-center shadow">
             <p className="text-lg text-gray-500">
-              No teams yet. Create your first team to start tracking games.
+              No teams yet. Create a team, or open an invite link from your
+              coach to join one.
             </p>
           </div>
         ) : (
           <div className="space-y-4">
-            {teamCards.map(({ team, activeSeason, season }) => (
+            {teamCards.map(({ team, activeSeason, season, role }) => (
               <Link
                 key={team.id}
                 href={`/teams/${team.id}`}
@@ -78,6 +84,11 @@ export default async function Home() {
                   <div>
                     <p className="text-xl font-bold text-gray-800">
                       {team.name}
+                      {role && (
+                        <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 align-middle text-xs font-bold text-blue-700">
+                          {ROLE_LABELS[role]}
+                        </span>
+                      )}
                     </p>
                     <p className="mt-1 text-sm text-gray-500">
                       {activeSeason

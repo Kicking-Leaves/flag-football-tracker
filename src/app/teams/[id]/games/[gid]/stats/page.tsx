@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getGame, getTeam } from "@/lib/db";
+import { getGame, getMyTeamRole, getTeam } from "@/lib/db";
+import { can } from "@/lib/permissions";
 import { generateGameCSV, generatePlayByPlayCSV } from "@/lib/csv";
 import StatsTable, {
   defenseRows,
@@ -25,11 +26,14 @@ export default async function GameStatsPage({
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
 
-  const [team, game] = await Promise.all([
+  const [team, game, role] = await Promise.all([
     getTeam(supabase, teamId),
     getGame(supabase, gameId),
+    getMyTeamRole(supabase, teamId, user.id),
   ]);
-  if (!team || !game) notFound();
+  if (!team || !game || !role) notFound();
+  const canScore = can(role, "scoreGame");
+  const canExport = can(role, "exportStats");
   if (game.team_id !== teamId) notFound();
 
   const gd = game.game_data;
@@ -143,6 +147,7 @@ export default async function GameStatsPage({
           rows={defenseRows(playerStats)}
         />
 
+        {canExport && (
         <section className="mt-6 rounded-2xl bg-white p-6 shadow-xl">
           <h3 className="mb-4 text-xl font-bold text-gray-800">Export</h3>
           <CSVExport
@@ -164,14 +169,15 @@ export default async function GameStatsPage({
             emailLabel="Email Play-by-Play"
           />
         </section>
+        )}
 
         <div className="mt-6 grid grid-cols-2 gap-3">
-          {game.status === "in_progress" && (
+          {canScore && (
             <Link
               href={`/teams/${teamId}/games/${gameId}`}
               className="rounded-xl bg-gray-700 py-3 text-center font-bold text-white shadow"
             >
-              Back to Game
+              {game.status === "in_progress" ? "Back to Game" : "Edit Game"}
             </Link>
           )}
           <Link

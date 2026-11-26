@@ -751,6 +751,17 @@ export function markGameCompleted(state: GameState): GameState {
 }
 
 /**
+ * Reopen a completed game so its plays can be corrected (undo, add plays).
+ * Ending it again recomputes the result.
+ */
+export function reopenGame(state: GameState): GameState {
+  const g = clone(state);
+  g.completed = false;
+  delete g.result;
+  return g;
+}
+
+/**
  * Detect "regulation ended tied" — UI calls this when the user taps End Game
  * after the 2nd half. Returns a state that flags the OT setup dialog.
  */
