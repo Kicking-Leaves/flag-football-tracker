@@ -10,6 +10,7 @@ import {
 } from "@/lib/db";
 import { ROLE_LABELS } from "@/lib/permissions";
 import LogoutButton from "./logout-button";
+import { isSiteAdmin, pendingAccountCount } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +21,12 @@ export default async function Home() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/auth/login");
 
-  const [teams, roles] = await Promise.all([
+  const [teams, roles, siteAdmin] = await Promise.all([
     getTeams(supabase),
     getMyTeamRoles(supabase, user.id),
+    isSiteAdmin(supabase),
   ]);
+  const pending = siteAdmin ? await pendingAccountCount(supabase) : 0;
 
   // For each team, pull the active season's games to surface a record summary.
   // Teams with no active season fall back to "all games" so legacy rows still
@@ -51,7 +54,17 @@ export default async function Home() {
                 Signed in as {user.email}
               </p>
             </div>
-            <LogoutButton />
+            <div className="flex flex-col items-end gap-2">
+              <LogoutButton />
+              {siteAdmin && (
+                <Link
+                  href={pending ? "/admin?status=pending" : "/admin"}
+                  className="rounded border border-white/60 px-4 py-2 text-sm font-medium"
+                >
+                  Site admin{pending ? ` (${pending} pending)` : ""}
+                </Link>
+              )}
+            </div>
           </div>
           <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Link

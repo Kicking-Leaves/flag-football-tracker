@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { safeNextPath } from "@/lib/permissions";
+import PasswordInput from "@/components/auth/PasswordInput";
 
 const noopSubscribe = () => () => {};
 
@@ -85,13 +86,12 @@ export default function LoginPage() {
             onChange={(e) => setEmail(e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
           />
-          <input
-            type="password"
+          <PasswordInput
             required
+            autoComplete="current-password"
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
           />
           <button
             type="submit"
@@ -129,7 +129,7 @@ export default function LoginPage() {
         <p className="text-center text-sm text-gray-500">
           No account?{" "}
           <Link href={withNext("/auth/register", next)} className="underline">
-            Sign up
+            Request access
           </Link>
         </p>
       </div>

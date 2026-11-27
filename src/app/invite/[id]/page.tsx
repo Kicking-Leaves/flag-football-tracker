@@ -72,7 +72,7 @@ export default async function InvitePage({
               ) : (
                 <div className="space-y-2">
                   <Link
-                    href={`/auth/register?next=${next}`}
+                    href={`/auth/register?invite=${id}`}
                     className="block rounded-xl bg-blue-600 py-3 text-center font-bold text-white"
                   >
                     Create an account to join
