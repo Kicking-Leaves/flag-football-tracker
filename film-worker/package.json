@@ -1,0 +1,15 @@
+{
+  "name": "routerunnr-film-worker",
+  "private": true,
+  "type": "module",
+  "description": "Cloud Run job: imports game film from Google Drive into Cloud Storage and makes 720p review copies.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/main.mjs"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.17.0",
+    "@supabase/supabase-js": "^2.106.1",
+    "google-auth-library": "^9.15.1"
+  }
+}

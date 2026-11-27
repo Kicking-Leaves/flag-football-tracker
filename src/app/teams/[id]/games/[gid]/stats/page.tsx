@@ -78,6 +78,12 @@ export default async function GameStatsPage({
               ? `Result: ${game.result?.toUpperCase()}`
               : "In progress"}
           </p>
+          <Link
+            href={`/teams/${teamId}/games/${gameId}/film`}
+            className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-bold text-purple-700 shadow"
+          >
+            Film
+          </Link>
         </div>
 
         {/* Team offense */}
