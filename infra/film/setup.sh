@@ -27,9 +27,18 @@ gc services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild
 echo "== Service account $SA"
 gc iam service-accounts describe "$SA" >/dev/null 2>&1 ||
   gc iam service-accounts create "$SA_NAME" --display-name "RouteRunnr film (worker + app)"
+# New accounts take a few seconds to become usable in IAM bindings.
+for _ in $(seq 1 30); do
+  gc iam service-accounts get-iam-policy "$SA" >/dev/null 2>&1 && break
+  sleep 5
+done
 # The worker signs its own read links for ffmpeg (signBlob on itself).
-gc iam service-accounts add-iam-policy-binding "$SA" --member "serviceAccount:$SA" \
-  --role roles/iam.serviceAccountTokenCreator >/dev/null
+for attempt in 1 2 3 4 5 6; do
+  gc iam service-accounts add-iam-policy-binding "$SA" --member "serviceAccount:$SA" \
+    --role roles/iam.serviceAccountTokenCreator >/dev/null && break
+  [ "$attempt" = 6 ] && exit 1
+  sleep 10
+done
 
 echo "== Bucket gs://$BUCKET"
 gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT_ID" >/dev/null 2>&1 ||
