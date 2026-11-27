@@ -139,6 +139,20 @@ export async function startFilmJob(command: "import" | "process", cameraId: stri
   if (!res.ok) throw new FilmError(`Couldn't start the film worker (${res.status}).`, 502);
 }
 
+/** Runs the folder watcher now instead of waiting for its next 5-minute turn. */
+export async function runWatcherNow(): Promise<void> {
+  const { project, region } = requireConfig();
+  const job = process.env.FILM_WATCHER_JOB_NAME || "film-watcher";
+  const token = await accessToken(["https://www.googleapis.com/auth/cloud-platform"]);
+  const res = await fetch(`https://run.googleapis.com/v2/projects/${project}/locations/${region}/jobs/${job}:run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "{}",
+    cache: "no-store",
+  });
+  if (!res.ok) throw new FilmError(`Couldn't start the folder check (${res.status}).`, 502);
+}
+
 let storage: Storage | null = null;
 function bucket() {
   const { project, bucket: name, credentials } = requireConfig();

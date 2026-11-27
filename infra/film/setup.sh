@@ -16,13 +16,15 @@ SA_NAME="routerunnr-film"
 SA="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 REPO="film"
 JOB="film-worker"
+WATCHER="film-watcher"
 IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/${JOB}:$(git rev-parse --short HEAD)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 gc() { gcloud --project "$PROJECT_ID" --quiet "$@"; }
 
 echo "== APIs"
 gc services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com \
-  drive.googleapis.com iamcredentials.googleapis.com secretmanager.googleapis.com storage.googleapis.com
+  drive.googleapis.com iamcredentials.googleapis.com secretmanager.googleapis.com storage.googleapis.com \
+  cloudscheduler.googleapis.com
 
 echo "== Service account $SA"
 gc iam service-accounts describe "$SA" >/dev/null 2>&1 ||
@@ -70,6 +72,27 @@ gc run jobs deploy "$JOB" --region "$REGION" --image "$IMAGE" --service-account 
 gc run jobs add-iam-policy-binding "$JOB" --region "$REGION" --member "serviceAccount:$SA" \
   --role roles/run.jobsExecutorWithOverrides >/dev/null
 
+echo "== Cloud Run job $WATCHER (checks watched Drive folders)"
+# Same image, small machine: it only lists folders and starts imports.
+gc run jobs deploy "$WATCHER" --region "$REGION" --image "$IMAGE" --service-account "$SA" \
+  --cpu 1 --memory 512Mi --task-timeout 10m --max-retries 0 --args watch \
+  --set-env-vars "SUPABASE_URL=$SUPABASE_URL,FILM_BUCKET=$BUCKET,FILM_GCP_REGION=$REGION,FILM_JOB_NAME=$JOB" \
+  --set-secrets "SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest"
+# Scheduler runs the watcher as the film account; the app can also run it on demand.
+gc run jobs add-iam-policy-binding "$WATCHER" --region "$REGION" --member "serviceAccount:$SA" \
+  --role roles/run.invoker >/dev/null
+
+echo "== Schedule: every 5 minutes"
+SCHEDULE_URI="https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${WATCHER}:run"
+if gc scheduler jobs describe film-watch --location "$REGION" >/dev/null 2>&1; then
+  gc scheduler jobs update http film-watch --location "$REGION" --schedule "*/5 * * * *" \
+    --uri "$SCHEDULE_URI" --http-method POST --oauth-service-account-email "$SA"
+else
+  gc scheduler jobs create http film-watch --location "$REGION" --schedule "*/5 * * * *" \
+    --time-zone "America/Los_Angeles" --uri "$SCHEDULE_URI" --http-method POST \
+    --oauth-service-account-email "$SA"
+fi
+
 cat <<DONE
 
 Done. Vercel needs these environment variables:
@@ -77,6 +100,7 @@ Done. Vercel needs these environment variables:
   FILM_GCP_REGION=$REGION
   FILM_BUCKET=$BUCKET
   FILM_JOB_NAME=$JOB
+  FILM_WATCHER_JOB_NAME=$WATCHER  (optional; this is the default)
   FILM_GCP_SA_KEY=<base64 of a key for $SA>
 Drive folders are shared with: $SA
 DONE

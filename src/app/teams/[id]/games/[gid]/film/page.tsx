@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getGame, getMyTeamRole, getTeam } from "@/lib/db";
 import { can } from "@/lib/permissions";
-import { getFilmCameras } from "@/lib/film/db";
+import { getFilmCameras, getFilmWatches } from "@/lib/film/db";
 import { filmConfig, filmShareEmail } from "@/lib/film/server";
 import { toCameraViews } from "@/lib/film/views";
 import FilmManager from "./FilmManager";
@@ -29,7 +29,11 @@ export default async function GameFilmPage({
   ]);
   if (!team || !game || !role || game.team_id !== teamId) notFound();
 
-  const cameras = await toCameraViews(await getFilmCameras(supabase, gameId));
+  const [cameraRows, watches] = await Promise.all([
+    getFilmCameras(supabase, gameId),
+    getFilmWatches(supabase, gameId),
+  ]);
+  const cameras = await toCameraViews(cameraRows);
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-blue-50 pb-24">
@@ -48,6 +52,7 @@ export default async function GameFilmPage({
         <FilmManager
           gameId={gameId}
           initialCameras={cameras}
+          initialWatches={watches}
           canManage={can(role, "manageTeam")}
           configured={Boolean(filmConfig())}
           shareEmail={filmShareEmail()}

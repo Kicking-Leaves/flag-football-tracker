@@ -90,3 +90,31 @@ describe("md5Matches", () => {
     expect(md5Matches(undefined, b64)).toBeNull();
   });
 });
+
+import { filesToImport, readyToImport, suggestCameraName, SETTLE_MS } from "./lib.mjs";
+
+describe("watcher", () => {
+  const now = Date.parse("2026-11-28T20:00:00Z");
+  const old = new Date(now - SETTLE_MS - 1000).toISOString();
+  const fresh = new Date(now - 30_000).toISOString();
+  const file = (id, extra = {}) => ({ id, name: `${id}.MP4`, mimeType: "video/mp4", size: "1000", md5Checksum: "abc", modifiedTime: old, ...extra });
+
+  it("only imports videos that have finished uploading and settled", () => {
+    expect(readyToImport(file("a"), now)).toBe(true);
+    expect(readyToImport(file("a", { md5Checksum: undefined }), now)).toBe(false);
+    expect(readyToImport(file("a", { modifiedTime: fresh }), now)).toBe(false);
+    expect(readyToImport(file("a", { size: "0" }), now)).toBe(false);
+    expect(readyToImport({ ...file("a"), name: "notes.txt", mimeType: "text/plain" }, now)).toBe(false);
+  });
+
+  it("skips files already imported and respects the camera limit", () => {
+    const files = [file("c"), file("a"), file("b"), file("d", { modifiedTime: fresh })];
+    expect(filesToImport(files, new Set(["b"]), 0, 8, now).map((f) => f.id)).toEqual(["a", "c"]);
+    expect(filesToImport(files, new Set(), 7, 8, now).map((f) => f.id)).toEqual(["a"]);
+    expect(filesToImport(files, new Set(), 8, 8, now)).toEqual([]);
+  });
+
+  it("names cameras from files", () => {
+    expect(suggestCameraName("MEVO_Endzone.mp4", 0)).toBe("MEVO Endzone");
+  });
+});

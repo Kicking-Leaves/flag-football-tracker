@@ -93,3 +93,40 @@ export function shortError(err) {
   const text = err instanceof Error ? err.message : String(err);
   return text.length > 500 ? `${text.slice(0, 497)}...` : text;
 }
+
+/** True for files we import as camera film (same rule as the app). */
+export function isVideoFile(file) {
+  if (file?.mimeType?.startsWith("video/")) return true;
+  return /\.(mp4|mov|m4v)$/i.test(file?.name ?? "");
+}
+
+/** A starting camera name from the file name, e.g. "MEVO_Sideline_0042.MP4" → "MEVO Sideline 0042". */
+export function suggestCameraName(fileName, index) {
+  const base = String(fileName ?? "").replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+  const name = base || `Camera ${index + 1}`;
+  return name.length > 60 ? name.slice(0, 60).trim() : name;
+}
+
+/** Minimum quiet time after a file's last change before the watcher imports it. */
+export const SETTLE_MS = 2 * 60_000;
+
+/**
+ * Whether a Drive file has finished uploading. Drive only reports an MD5 once a
+ * file's content is complete; waiting a couple of minutes after the last change
+ * also skips files a sync client is still rewriting.
+ */
+export function readyToImport(file, now = Date.now()) {
+  if (!isVideoFile(file)) return false;
+  if (!file.md5Checksum || !(Number(file.size) > 0)) return false;
+  const changed = Date.parse(file.modifiedTime ?? "");
+  return Number.isFinite(changed) && now - changed >= SETTLE_MS;
+}
+
+/** Files a watch should import now: finished videos not already in the game, up to the camera limit. */
+export function filesToImport(files, importedIds, cameraCount, maxCameras, now = Date.now()) {
+  const room = Math.max(0, maxCameras - cameraCount);
+  return files
+    .filter((f) => !importedIds.has(f.id) && readyToImport(f, now))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .slice(0, room);
+}

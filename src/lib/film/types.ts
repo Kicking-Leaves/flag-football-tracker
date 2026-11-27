@@ -27,6 +27,23 @@ export interface FilmCamera {
   updated_at: string;
 }
 
+/** A Drive folder the watcher checks for new camera files (rr_film_watches). */
+export interface FilmWatch {
+  id: string;
+  game_id: string;
+  folder_id: string;
+  folder_name: string | null;
+  active: boolean;
+  expires_at: string;
+  last_checked_at: string | null;
+  last_error: string | null;
+  imported_count: number;
+  created_at: string;
+}
+
+/** How long a watch runs before stopping on its own. */
+export const WATCH_DAYS = 7;
+
 /** A camera plus short-lived links the browser can load directly. */
 export interface FilmCameraView extends FilmCamera {
   thumbUrl: string | null;

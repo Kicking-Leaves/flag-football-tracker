@@ -2,10 +2,13 @@
 //
 //   node src/main.mjs import <cameraId>   copy from Google Drive, then process
 //   node src/main.mjs process <cameraId>  read details, make the 720p copy and thumbnail
+//   node src/main.mjs watch               import new videos from watched Drive folders
+//                                         (run every 5 minutes by Cloud Scheduler)
 //
 // Env:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  status updates (bypasses RLS)
 //   FILM_BUCKET                              Cloud Storage bucket for film
+//   FILM_GCP_REGION, FILM_JOB_NAME          (watch) where to start import jobs
 // Google credentials come from the job's service account (Application Default
 // Credentials). Drive folders must be shared with that account.
 
@@ -21,12 +24,14 @@ import { Storage } from "@google-cloud/storage";
 import { GoogleAuth } from "google-auth-library";
 import { createClient } from "@supabase/supabase-js";
 import {
+  filesToImport,
   md5Matches,
   objectPaths,
   probeDetails,
   progressFromLine,
   proxyArgs,
   shortError,
+  suggestCameraName,
   thumbArgs,
 } from "./lib.mjs";
 
@@ -230,10 +235,129 @@ async function processCamera(camera) {
   }
 }
 
+// ---------- Watched folders ----------
+
+const MAX_CAMERAS = 8; // same limit as the app
+
+async function listFolder(folderId) {
+  const files = [];
+  let pageToken;
+  do {
+    const params = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: "nextPageToken, files(id, name, size, mimeType, md5Checksum, modifiedTime)",
+      pageSize: "200",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const res = await fetch(`https://www.googleapis.com/drive/v3/files?${params}`, {
+      headers: { Authorization: `Bearer ${await driveToken()}` },
+    });
+    if (res.status === 404 || res.status === 403) {
+      throw new Error("RouteRunnr can't see this folder any more. Is it still shared with the importer account?");
+    }
+    if (!res.ok) throw new Error(`Drive listing failed (${res.status})`);
+    const body = await res.json();
+    files.push(...body.files);
+    pageToken = body.nextPageToken;
+  } while (pageToken);
+  return files;
+}
+
+const runAuth = new GoogleAuth({ scopes: ["https://www.googleapis.com/auth/cloud-platform"] });
+
+/** Starts the import worker for one camera (a separate, larger job execution). */
+async function startImportJob(cameraId) {
+  const project = await runAuth.getProjectId();
+  const region = env("FILM_GCP_REGION");
+  const job = env("FILM_JOB_NAME");
+  const client = await runAuth.getClient();
+  const { token } = await client.getAccessToken();
+  const res = await fetch(`https://run.googleapis.com/v2/projects/${project}/locations/${region}/jobs/${job}:run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ overrides: { containerOverrides: [{ args: ["import", cameraId] }] } }),
+  });
+  if (!res.ok) throw new Error(`Couldn't start import (${res.status}): ${await res.text()}`);
+}
+
+async function checkWatch(watch) {
+  const files = await listFolder(watch.folder_id);
+  const { data: cams, error } = await supabase
+    .from("rr_film_cameras")
+    .select("drive_file_id")
+    .eq("game_id", watch.game_id);
+  if (error) throw new Error(error.message);
+  const imported = new Set(cams.map((c) => c.drive_file_id).filter(Boolean));
+  const picks = filesToImport(files, imported, cams.length, MAX_CAMERAS);
+  if (picks.length === 0) return 0;
+
+  const { data: created, error: insertError } = await supabase
+    .from("rr_film_cameras")
+    .insert(
+      picks.map((f, i) => ({
+        game_id: watch.game_id,
+        name: suggestCameraName(f.name, cams.length + i),
+        position: cams.length + i,
+        source: "drive",
+        drive_file_id: f.id,
+        source_name: f.name,
+        size_bytes: Number(f.size) || null,
+        created_by: watch.created_by,
+      })),
+    )
+    .select("id, name");
+  if (insertError) throw new Error(insertError.message);
+
+  let started = 0;
+  for (const cam of created) {
+    try {
+      await startImportJob(cam.id);
+      started++;
+      console.log(`Watch ${watch.id}: importing ${cam.name}`);
+    } catch (err) {
+      await update(cam.id, { status: "failed", error: shortError(err) });
+    }
+  }
+  return started;
+}
+
+async function runWatches() {
+  const nowIso = new Date().toISOString();
+  // Expired watches stop on their own.
+  await supabase.from("rr_film_watches").update({ active: false }).eq("active", true).lte("expires_at", nowIso);
+
+  const { data: watches, error } = await supabase
+    .from("rr_film_watches")
+    .select("id, game_id, folder_id, created_by, imported_count")
+    .eq("active", true)
+    .gt("expires_at", nowIso);
+  if (error) throw new Error(error.message);
+  console.log(`${watches.length} active watch(es)`);
+
+  for (const watch of watches) {
+    const fields = { last_checked_at: new Date().toISOString(), last_error: null };
+    try {
+      const started = await checkWatch(watch);
+      if (started) fields.imported_count = watch.imported_count + started;
+    } catch (err) {
+      console.error(`Watch ${watch.id}:`, err);
+      fields.last_error = shortError(err);
+    }
+    const { error: saveError } = await supabase.from("rr_film_watches").update(fields).eq("id", watch.id);
+    if (saveError) console.error(`Watch ${watch.id} save failed: ${saveError.message}`);
+  }
+}
+
 async function main() {
   const [command, cameraId] = process.argv.slice(2);
+  if (command === "watch") {
+    await runWatches();
+    return;
+  }
   if (!["import", "process"].includes(command) || !cameraId) {
-    throw new Error("Usage: main.mjs import|process <cameraId>");
+    throw new Error("Usage: main.mjs import|process <cameraId> | watch");
   }
   let camera = await loadCamera(cameraId);
   try {
