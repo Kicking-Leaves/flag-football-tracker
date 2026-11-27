@@ -9,15 +9,18 @@ import type {
   Athlete,
   Game,
   GameState,
+  GameType,
   Player,
   PlayerStats,
   School,
   Season,
+  SeasonScope,
   SeasonStats,
   SeasonTerm,
   Team,
 } from "./types";
-import { seasonDisplayName } from "./types";
+import { countsForSeason, inSeasonScope, seasonDisplayName } from "./types";
+import { addSackStats, emptySackStats, gameSackStats, playerStatsWithSacks } from "./sacks";
 import type { OverlayScoreboardRow } from "./scorebug";
 import { normalizeName, type PlannedRosterRow } from "./roster-import";
 import { makeEmptyPlayerStats } from "./game-engine";
@@ -31,7 +34,7 @@ const SCHOOL_SELECT = "id, owner_id, name, created_at";
 const ATHLETE_SELECT = "id, school_id, name, graduation_year, created_at";
 
 const GAME_SELECT =
-  "id, team_id, season_id, opponent_name, game_date, status, result, game_data, overlay_token, created_at, updated_at";
+  "id, team_id, season_id, opponent_name, game_date, game_type, status, result, game_data, overlay_token, created_at, updated_at";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -961,6 +964,7 @@ export async function createGame(
   opponentName: string,
   gameDate: string,
   initialState: GameState,
+  gameType: GameType = "regular",
 ): Promise<Game> {
   const { data, error } = await supabase
     .from("rr_games")
@@ -969,6 +973,7 @@ export async function createGame(
       season_id: seasonId,
       opponent_name: opponentName,
       game_date: gameDate,
+      game_type: gameType,
       status: "in_progress",
       result: null,
       game_data: initialState,
@@ -977,6 +982,19 @@ export async function createGame(
     .single();
   if (error) throw error;
   return data as Game;
+}
+
+/** Changes a game between scrimmage, regular season and postseason. */
+export async function updateGameType(
+  supabase: SupabaseClient,
+  gameId: string,
+  gameType: GameType,
+): Promise<void> {
+  const { error } = await supabase
+    .from("rr_games")
+    .update({ game_type: gameType, updated_at: new Date().toISOString() })
+    .eq("id", gameId);
+  if (error) throw error;
 }
 
 export async function saveGameState(
@@ -1052,7 +1070,7 @@ export async function rotateOverlayToken(
  * Aggregate a single player's stats across all completed games for a team.
  * Returns the running total plus the per-game log (newest first), including
  * games where the player did not record stats so the caller can decide how
- * to display them.
+ * to display them. Scrimmages appear in the log but not in the total.
  */
 export function computePlayerSeasonStats(
   games: Game[],
@@ -1074,9 +1092,9 @@ export function computePlayerSeasonStats(
   const lines: { game: Game; stats: PlayerStats | null }[] = [];
 
   for (const game of completed) {
-    const ps = (game.game_data?.playerStats ?? {})[playerId];
+    const ps = game.game_data ? playerStatsWithSacks(game.game_data)[playerId] : undefined;
     lines.push({ game, stats: ps ?? null });
-    if (!ps) continue;
+    if (!ps || !countsForSeason(game)) continue;
     total.offense.passAttempts += ps.offense.passAttempts ?? 0;
     total.offense.completions += ps.offense.completions ?? 0;
     total.offense.incompletions += ps.offense.incompletions ?? 0;
@@ -1091,6 +1109,7 @@ export function computePlayerSeasonStats(
     total.defense.interceptions += ps.defense.interceptions ?? 0;
     total.defense.tacklesForLoss += ps.defense.tacklesForLoss ?? 0;
     total.defense.passDeflections += ps.defense.passDeflections ?? 0;
+    total.defense.sacks = (total.defense.sacks ?? 0) + (ps.defense.sacks ?? 0);
   }
   return { total, lines };
 }
@@ -1101,8 +1120,11 @@ export function computePlayerSeasonStats(
  * Build season totals from the array of completed games. Rebuilds from scratch
  * every time — never accumulates incrementally. This replaces the fragile
  * add/subtract approach from app.jsx.
+ *
+ * Scrimmages never count. Pass a scope to total only the regular season or
+ * only the postseason; the default ("full") counts both.
  */
-export function computeSeasonStats(games: Game[]): SeasonStats {
+export function computeSeasonStats(games: Game[], scope: SeasonScope = "full"): SeasonStats {
   const stats: SeasonStats = {
     gamesPlayed: 0,
     wins: 0,
@@ -1127,11 +1149,13 @@ export function computeSeasonStats(games: Game[]): SeasonStats {
       forcedPunts: 0,
       turnoversOnDowns: 0,
     },
+    sacks: emptySackStats(),
     playerStats: {},
   };
 
   for (const game of games) {
     if (game.status !== "completed") continue;
+    if (!inSeasonScope(game, scope)) continue;
     const gd = game.game_data;
     if (!gd) continue;
 
@@ -1163,7 +1187,9 @@ export function computeSeasonStats(games: Game[]): SeasonStats {
       stats.defense.turnoversOnDowns += def.turnoversOnDowns ?? 0;
     }
 
-    Object.entries(gd.playerStats ?? {}).forEach(([playerId, playerData]) => {
+    addSackStats(stats.sacks, gameSackStats(gd).team);
+
+    Object.entries(playerStatsWithSacks(gd)).forEach(([playerId, playerData]) => {
       const pd = playerData as PlayerStats;
       const existing =
         stats.playerStats[playerId] ?? makeEmptyPlayerStats(pd.name, pd.number);
@@ -1184,6 +1210,7 @@ export function computeSeasonStats(games: Game[]): SeasonStats {
       existing.defense.interceptions += pd.defense.interceptions ?? 0;
       existing.defense.tacklesForLoss += pd.defense.tacklesForLoss ?? 0;
       existing.defense.passDeflections += pd.defense.passDeflections ?? 0;
+      existing.defense.sacks = (existing.defense.sacks ?? 0) + (pd.defense.sacks ?? 0);
       stats.playerStats[playerId] = existing;
     });
   }

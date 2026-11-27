@@ -33,6 +33,8 @@ type Flags = {
   flagPull: boolean;
   safety: boolean;
   passDeflection: boolean;
+  /** Pass play: the passer's flag was pulled before the throw. */
+  sack: boolean;
 };
 
 const offenseFlagDefaults: Flags = {
@@ -43,6 +45,7 @@ const offenseFlagDefaults: Flags = {
   flagPull: false,
   safety: false,
   passDeflection: false,
+  sack: false,
 };
 
 const defenseFlagDefaults: Flags = {
@@ -118,11 +121,13 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
     const autoFirstDown =
       yards >= state.yardsToGo && state.yardsToGo > 0;
 
+    const sack = playType === "pass" && flags.sack;
     const playData: PlayData = {
       possession: state.possession,
       playType,
       yards,
-      complete: playType === "pass" ? flags.complete : true,
+      complete: playType === "pass" ? flags.complete && !sack : true,
+      sack,
       firstDown: flags.firstDown || autoFirstDown,
       touchdown: flags.touchdown,
       interception: flags.interception,
@@ -131,7 +136,7 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
       passDeflection: flags.passDeflection,
       passer: playType === "pass" ? players.passer || null : null,
       receiver:
-        playType === "pass" && flags.complete ? players.receiver || null : null,
+        playType === "pass" && flags.complete && !sack ? players.receiver || null : null,
       rusher: playType === "run" ? players.rusher || null : null,
       defender: !isOffense ? players.defender || null : null,
     };
@@ -204,7 +209,7 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
                       </option>
                     ))}
                   </select>
-                  {flags.complete && (
+                  {flags.complete && !flags.sack && (
                     <select
                       value={players.receiver}
                       onChange={(e) =>
@@ -318,7 +323,30 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
         <div className="rounded-2xl bg-white p-6 shadow-xl">
           <p className="mb-3 text-sm font-bold text-gray-600">OUTCOME</p>
           <div className="grid grid-cols-2 gap-3">
-            {playType === "pass" && isOffense && (
+            {playType === "pass" && (
+              <button
+                type="button"
+                onClick={() => {
+                  const sack = !flags.sack;
+                  setFlags({
+                    ...flags,
+                    sack,
+                    // A sack is a flag pull on the passer, with no throw.
+                    flagPull: !isOffense && sack ? true : flags.flagPull,
+                    complete: sack ? false : true,
+                    touchdown: sack ? false : flags.touchdown,
+                    interception: sack ? false : flags.interception,
+                    passDeflection: sack ? false : flags.passDeflection,
+                  });
+                }}
+                className={`rounded-xl py-3 font-bold ${
+                  flags.sack ? "bg-red-700 text-white" : "bg-gray-100"
+                }`}
+              >
+                {isOffense ? "Sacked" : "Sack"}
+              </button>
+            )}
+            {playType === "pass" && isOffense && !flags.sack && (
               <button
                 type="button"
                 onClick={() =>
@@ -334,7 +362,14 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
             {!isOffense && (
               <button
                 type="button"
-                onClick={() => setFlags({ ...flags, flagPull: !flags.flagPull })}
+                onClick={() =>
+                  setFlags({
+                    ...flags,
+                    flagPull: !flags.flagPull,
+                    // No flag pull means no sack.
+                    sack: flags.flagPull ? false : flags.sack,
+                  })
+                }
                 className={`rounded-xl py-3 font-bold ${
                   flags.flagPull ? "bg-purple-600 text-white" : "bg-gray-100"
                 }`}
@@ -360,6 +395,7 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
                 setFlags({
                   ...flags,
                   touchdown: newTD,
+                  sack: newTD ? false : flags.sack,
                   flagPull: !isOffense && newTD ? false : flags.flagPull,
                 });
               }}
@@ -373,7 +409,11 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
               <button
                 type="button"
                 onClick={() =>
-                  setFlags({ ...flags, interception: !flags.interception })
+                  setFlags({
+                    ...flags,
+                    interception: !flags.interception,
+                    sack: !flags.interception ? false : flags.sack,
+                  })
                 }
                 className={`rounded-xl py-3 font-bold ${
                   flags.interception ? "bg-red-600 text-white" : "bg-gray-100"
@@ -401,6 +441,7 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
                   setFlags({
                     ...flags,
                     interception: newInt,
+                    sack: newInt ? false : flags.sack,
                     flagPull: newInt ? false : flags.flagPull,
                   });
                 }}
@@ -415,7 +456,11 @@ export default function PlayEntry({ state, roster, onSubmit }: PlayEntryProps) {
               <button
                 type="button"
                 onClick={() =>
-                  setFlags({ ...flags, passDeflection: !flags.passDeflection })
+                  setFlags({
+                    ...flags,
+                    passDeflection: !flags.passDeflection,
+                    sack: !flags.passDeflection ? false : flags.sack,
+                  })
                 }
                 className={`rounded-xl py-3 font-bold ${
                   flags.passDeflection ? "bg-orange-600 text-white" : "bg-gray-100"

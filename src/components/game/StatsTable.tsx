@@ -91,12 +91,14 @@ export function defenseRows(
         p.defense.flagPulls > 0 ||
         p.defense.interceptions > 0 ||
         p.defense.tacklesForLoss > 0 ||
-        p.defense.passDeflections > 0,
+        p.defense.passDeflections > 0 ||
+        (p.defense.sacks ?? 0) > 0,
     )
     .map((p) => [
       `#${p.number} ${p.name}`,
       p.defense.flagPulls,
       p.defense.tacklesForLoss,
+      p.defense.sacks ?? 0,
       p.defense.interceptions,
       p.defense.passDeflections,
     ]);

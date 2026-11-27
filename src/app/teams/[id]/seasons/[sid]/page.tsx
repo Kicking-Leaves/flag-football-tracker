@@ -10,6 +10,14 @@ import {
   getTeam,
 } from "@/lib/db";
 import { can } from "@/lib/permissions";
+import { generateSeasonCSV } from "@/lib/csv";
+import {
+  GAME_TYPE_LABELS,
+  inSeasonScope,
+  type Game,
+  type SeasonScope,
+} from "@/lib/types";
+import SeasonExport, { type SeasonExportOption } from "./SeasonExport";
 
 export const dynamic = "force-dynamic";
 
@@ -39,7 +47,26 @@ export default async function SeasonDetailPage({
     getPlayers(supabase, teamId, seasonId),
     getGames(supabase, teamId, seasonId),
   ]);
+  const canExport = can(role, "exportStats");
   const stats = computeSeasonStats(games);
+  const postseason = computeSeasonStats(games, "postseason");
+  const scrimmages = games.filter(
+    (g) => g.status === "completed" && g.game_type === "scrimmage",
+  ).length;
+  const exportTitle = `${team.name} ${season.displayName}`;
+  const safeBase = exportTitle.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const exportOptions: SeasonExportOption[] = (
+    ["regular", "postseason", "full"] as SeasonScope[]
+  ).map((scope) => ({
+    scope,
+    csv: generateSeasonCSV(team.name, computeSeasonStats(games, scope), {
+      seasonName: season.displayName,
+      scope,
+      games,
+    }),
+    filename: `${safeBase}_${scope === "full" ? "full-season" : scope}.csv`,
+    games: games.filter((g) => g.status === "completed" && inSeasonScope(g, scope)).length,
+  }));
   const completedGames = games.filter((g) => g.status === "completed");
   const inProgressGames = games.filter((g) => g.status === "in_progress");
 
@@ -67,6 +94,17 @@ export default async function SeasonDetailPage({
               {stats.wins}-{stats.losses}
               {stats.ties > 0 ? `-${stats.ties}` : ""} · {stats.gamesPlayed}{" "}
               games
+            </p>
+          )}
+          {postseason.gamesPlayed > 0 && (
+            <p className="mt-1 text-sm text-green-100">
+              Postseason {postseason.wins}-{postseason.losses}
+              {postseason.ties > 0 ? `-${postseason.ties}` : ""}
+            </p>
+          )}
+          {scrimmages > 0 && (
+            <p className="mt-1 text-sm text-green-100">
+              Not counting {scrimmages} {scrimmages === 1 ? "scrimmage" : "scrimmages"}
             </p>
           )}
           <div className={`mt-4 grid gap-3 ${canCreate ? "grid-cols-2" : "grid-cols-1"}`}>
@@ -101,7 +139,20 @@ export default async function SeasonDetailPage({
                 value={stats.offense.passingYards + stats.offense.rushingYards}
               />
               <Stat label="Touchdowns" value={stats.offense.touchdowns} />
+              <Stat label="Player Sacks" value={stats.sacks.playerSacks} />
+              <Stat label="Coverage Sacks" value={stats.sacks.coverageSacks} />
+              <Stat label="Interceptions" value={stats.defense.interceptions} />
+              <Stat label="Flag Pulls" value={stats.defense.flagPulls} />
             </div>
+          </section>
+        )}
+
+        {canExport && (
+          <section className="mb-6 rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="mb-4 text-xl font-bold text-gray-800">
+              Export Season Stats
+            </h2>
+            <SeasonExport options={exportOptions} title={exportTitle} />
           </section>
         )}
 
@@ -130,6 +181,7 @@ export default async function SeasonDetailPage({
                       <p className="text-lg font-bold text-gray-800">
                         vs {g.opponent_name}
                       </p>
+                      <GameTypeTag game={g} />
                       <p className="mt-1 text-sm text-blue-600">
                         {canScore ? "Tap to resume →" : "Live · tap for stats →"}
                       </p>
@@ -181,6 +233,7 @@ export default async function SeasonDetailPage({
                         <p className="text-lg font-bold text-gray-800">
                           vs {g.opponent_name}
                         </p>
+                        <GameTypeTag game={g} />
                       </div>
                       <div className="text-right">
                         <p
@@ -207,6 +260,23 @@ export default async function SeasonDetailPage({
         </section>
       </div>
     </main>
+  );
+}
+
+/** Marks scrimmages and postseason games; regular season games need no tag. */
+function GameTypeTag({ game }: { game: Game }) {
+  const type = game.game_type ?? "regular";
+  if (type === "regular") return null;
+  return (
+    <span
+      className={`mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-bold ${
+        type === "postseason"
+          ? "bg-yellow-100 text-yellow-800"
+          : "bg-gray-200 text-gray-700"
+      }`}
+    >
+      {GAME_TYPE_LABELS[type]}
+    </span>
   );
 }
 

@@ -11,6 +11,9 @@ import StatsTable, {
   rushingRows,
 } from "@/components/game/StatsTable";
 import CSVExport from "@/components/game/CSVExport";
+import GameTypePicker from "@/components/game/GameTypePicker";
+import { GAME_TYPE_LABELS, countsForSeason } from "@/lib/types";
+import { gameSackStats, playerStatsWithSacks } from "@/lib/sacks";
 
 export const dynamic = "force-dynamic";
 
@@ -37,12 +40,15 @@ export default async function GameStatsPage({
   if (game.team_id !== teamId) notFound();
 
   const gd = game.game_data;
-  const playerStats = Object.values(gd.playerStats ?? {});
+  const playerStats = Object.values(playerStatsWithSacks(gd));
+  const sacks = gameSackStats(gd).team;
+  const gameType = game.game_type ?? "regular";
 
   const csv = generateGameCSV({
     teamName: team.name,
     opponent_name: game.opponent_name,
     game_date: game.game_date,
+    game_type: gameType,
     game_data: gd,
   });
   const fileBase = `${team.name}_vs_${game.opponent_name}_${new Date(game.game_date)
@@ -78,6 +84,18 @@ export default async function GameStatsPage({
               ? `Result: ${game.result?.toUpperCase()}`
               : "In progress"}
           </p>
+          {canScore ? (
+            <GameTypePicker gameId={gameId} value={gameType} />
+          ) : (
+            <p className="mt-1 text-sm font-semibold text-purple-100">
+              {GAME_TYPE_LABELS[gameType]}
+            </p>
+          )}
+          {!countsForSeason(game) && (
+            <p className="mt-1 text-xs text-purple-100">
+              Scrimmage stats don&apos;t count toward season stats.
+            </p>
+          )}
           <Link
             href={`/teams/${teamId}/games/${gameId}/film`}
             className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-bold text-purple-700 shadow"
@@ -111,6 +129,11 @@ export default async function GameStatsPage({
               value={`${gd.stats.offense.completions}/${gd.stats.offense.passAttempts}`}
             />
             <Stat label="Rush Att" value={gd.stats.offense.rushAttempts} />
+            <Stat label="Sacked" value={sacks.sackedAllowed} />
+            <Stat
+              label="Coverage Sacks Allowed"
+              value={sacks.coverageSacksAllowed}
+            />
           </div>
         </section>
 
@@ -123,6 +146,8 @@ export default async function GameStatsPage({
               label="Interceptions"
               value={gd.stats.defense.interceptions}
             />
+            <Stat label="Player Sacks" value={sacks.playerSacks} />
+            <Stat label="Coverage Sacks" value={sacks.coverageSacks} />
             <Stat label="Forced Punts" value={gd.stats.defense.forcedPunts} />
             <Stat
               label="Turnovers on Downs"
@@ -149,7 +174,7 @@ export default async function GameStatsPage({
         />
         <StatsTable
           title="Defense"
-          headers={["Player", "Tackles", "TFL", "INT", "PD"]}
+          headers={["Player", "Tackles", "TFL", "Sacks", "INT", "PD"]}
           rows={defenseRows(playerStats)}
         />
 

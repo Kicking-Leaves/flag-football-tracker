@@ -12,7 +12,9 @@ import {
   type RosterEntryWithTeam,
 } from "@/lib/db";
 import type { Game, PlayerStats, Season } from "@/lib/types";
+import { GAME_TYPE_LABELS, countsForSeason } from "@/lib/types";
 import { makeEmptyPlayerStats } from "@/lib/game-engine";
+import { playerStatsWithSacks } from "@/lib/sacks";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +32,8 @@ function hasDefense(p: PlayerStats): boolean {
     p.defense.flagPulls > 0 ||
     p.defense.interceptions > 0 ||
     p.defense.tacklesForLoss > 0 ||
-    p.defense.passDeflections > 0
+    p.defense.passDeflections > 0 ||
+    (p.defense.sacks ?? 0) > 0
   );
 }
 
@@ -39,13 +42,13 @@ function addStats(into: PlayerStats, from: PlayerStats): void {
     into.offense[k] += from.offense[k] ?? 0;
   }
   for (const k of Object.keys(into.defense) as (keyof PlayerStats["defense"])[]) {
-    into.defense[k] += from.defense[k] ?? 0;
+    into.defense[k] = (into.defense[k] ?? 0) + (from.defense[k] ?? 0);
   }
 }
 
 /**
- * Walk every completed game and accumulate stats for any playerStats entry
- * whose name+number matches. Returns the aggregated PlayerStats and the
+ * Walk every completed non-scrimmage game and accumulate stats for any
+ * playerStats entry whose name+number matches. Returns the aggregated PlayerStats and the
  * matching games (for per-season breakdowns).
  */
 function aggregateCareer(
@@ -57,10 +60,10 @@ function aggregateCareer(
   const matchedGames: Game[] = [];
 
   for (const g of games) {
-    if (g.status !== "completed") continue;
+    if (g.status !== "completed" || !countsForSeason(g)) continue;
     const gd = g.game_data;
     if (!gd?.playerStats) continue;
-    const match = Object.values(gd.playerStats).find(
+    const match = Object.values(playerStatsWithSacks(gd)).find(
       (ps) => ps.name === name && ps.number === number,
     );
     if (!match) continue;
@@ -79,6 +82,7 @@ function aggregateCareer(
     total.defense.interceptions += match.defense.interceptions ?? 0;
     total.defense.tacklesForLoss += match.defense.tacklesForLoss ?? 0;
     total.defense.passDeflections += match.defense.passDeflections ?? 0;
+    total.defense.sacks = (total.defense.sacks ?? 0) + (match.defense.sacks ?? 0);
   }
   return { total, matchedGames };
 }
@@ -396,6 +400,12 @@ export default async function PlayerStatsPage({
                         <p className="font-bold text-gray-800">
                           vs {game.opponent_name}
                         </p>
+                        {game.game_type && game.game_type !== "regular" && (
+                          <p className="text-xs font-semibold text-gray-500">
+                            {GAME_TYPE_LABELS[game.game_type]}
+                            {!countsForSeason(game) && " · not in season totals"}
+                          </p>
+                        )}
                         {stats ? (
                           <p className="mt-1 text-xs text-gray-600">
                             {summarizeLine(stats)}
@@ -479,6 +489,7 @@ function StatGrid({ total }: { total: PlayerStats }) {
             ["Flag Pulls", total.defense.flagPulls],
             ["INT", total.defense.interceptions],
             ["TFL", total.defense.tacklesForLoss],
+            ["Sacks", total.defense.sacks ?? 0],
             ["PD", total.defense.passDeflections],
           ]}
         />
@@ -538,6 +549,7 @@ function summarizeLine(s: PlayerStats): string {
     defParts.push(`${s.defense.interceptions} INT`);
   if (s.defense.tacklesForLoss > 0)
     defParts.push(`${s.defense.tacklesForLoss} TFL`);
+  if ((s.defense.sacks ?? 0) > 0) defParts.push(`${s.defense.sacks} sack${s.defense.sacks === 1 ? "" : "s"}`);
   if (s.defense.passDeflections > 0)
     defParts.push(`${s.defense.passDeflections} PD`);
   if (defParts.length > 0) parts.push(defParts.join(", "));
