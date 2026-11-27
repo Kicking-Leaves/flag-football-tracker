@@ -771,9 +771,17 @@ function keepIdentity(g: GameState, e: Play): void {
   if (!e.recordedAt) delete g.plays[i].recordedAt;
 }
 
-function stripTime(g: GameState): GameState {
+/**
+ * For markers inferred while rebuilding an older game: no recorded time, and
+ * an id derived from the entry that follows, so every rebuild gives the same
+ * ids (the change log matches entries by id).
+ */
+function inferredMarker(g: GameState, nextId: number, offset: number): GameState {
   const last = g.plays[g.plays.length - 1];
-  if (last) delete last.recordedAt;
+  if (last) {
+    delete last.recordedAt;
+    last.id = nextId - offset;
+  }
   return g;
 }
 
@@ -783,10 +791,10 @@ function applyEntry(g: GameState, e: Play, next: Play | undefined, original: Gam
   // Older games didn't log the end of the half or the start of overtime:
   // infer them from the period each entry was recorded in.
   if (!isMarker(e) && e.half === 2 && s.half === 1) {
-    s = stripTime(endHalf(s, e.possession ?? s.possession));
+    s = inferredMarker(endHalf(s, e.possession ?? s.possession), e.id, 1);
   }
   if (e.isOvertimeConversion && !s.isOvertime) {
-    s = stripTime(startOvertime(s, e.possession ?? s.possession));
+    s = inferredMarker(startOvertime(s, e.possession ?? s.possession), e.id, 2);
   }
 
   // The possession logged with each entry is what the scorer saw, so it wins

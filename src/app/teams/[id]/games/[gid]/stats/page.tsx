@@ -112,6 +112,14 @@ export default async function GameStatsPage({
             >
               Film
             </Link>
+            {role === "admin" && (
+              <Link
+                href={`/teams/${teamId}/games/${gameId}/history`}
+                className="inline-block rounded-xl bg-white/20 px-4 py-2 text-sm font-bold text-white shadow"
+              >
+                Change history
+              </Link>
+            )}
           </div>
         </div>
 

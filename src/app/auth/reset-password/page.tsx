@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import PasswordInput from "@/components/auth/PasswordInput";
 import { createClient } from "@/lib/supabase/client";
 
 const MIN_LENGTH = 6; // Supabase project setting (password_min_length)
@@ -66,25 +67,21 @@ export default function ResetPasswordPage() {
 
         {signedIn && (
           <form onSubmit={handleSubmit} className="space-y-3">
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={MIN_LENGTH}
               autoComplete="new-password"
               placeholder={`New password (at least ${MIN_LENGTH} characters)`}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
             />
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={MIN_LENGTH}
               autoComplete="new-password"
               placeholder="Confirm new password"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
             />
             <button
               type="submit"
