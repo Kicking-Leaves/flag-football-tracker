@@ -42,8 +42,10 @@ export default async function TeamDashboardPage({
   const [seasons, schools, filmInbox] = await Promise.all([
     getSeasons(supabase, id),
     isStaff ? getSchools(supabase) : Promise.resolve([]),
-    // Film isn't required for the dashboard; skip the card if the lookup fails.
-    isStaff ? getTeamFilmInbox(supabase, id).catch(() => null) : Promise.resolve(null),
+    // Admins, coaches and stat keepers see the film inbox (including folders
+    // that didn't match a game). Film isn't required for the dashboard, so
+    // skip the card if the lookup fails.
+    can(role, "scoreGame") ? getTeamFilmInbox(supabase, id).catch(() => null) : Promise.resolve(null),
   ]);
 
   // For each season compute its record in parallel.

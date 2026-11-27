@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { TeamFilmInbox } from "@/lib/film/db";
 
-/** Staff view of the team's Drive film inbox: naming pattern and recent game folders. */
+/** Admin, coach and stat keeper view of the team's Drive film inbox: naming pattern and recent game folders. */
 export default function FilmInboxCard({ teamId, inbox }: { teamId: string; inbox: TeamFilmInbox }) {
   const unmatched = inbox.folders.filter((f) => f.status === "unmatched");
   const matched = inbox.folders.filter((f) => f.status === "matched" && f.team_id === teamId).slice(0, 5);
