@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { FilmCamera } from "./types";
+import { WATCH_DAYS, type FilmCamera, type FilmWatch } from "./types";
 
 const CAMERA_COLUMNS =
   "id, game_id, team_id, name, position, source, drive_file_id, source_name, size_bytes, " +
@@ -63,4 +63,109 @@ export async function renameFilmCamera(supabase: SupabaseClient, id: string, nam
 export async function deleteFilmCameraRow(supabase: SupabaseClient, id: string): Promise<void> {
   const { error } = await supabase.from("rr_film_cameras").delete().eq("id", id);
   if (error) throw error;
+}
+
+const WATCH_COLUMNS =
+  "id, game_id, folder_id, folder_name, active, expires_at, last_checked_at, last_error, imported_count, source, created_at";
+
+export async function getFilmWatches(supabase: SupabaseClient, gameId: string): Promise<FilmWatch[]> {
+  const { data, error } = await supabase
+    .from("rr_film_watches")
+    .select(WATCH_COLUMNS)
+    .eq("game_id", gameId)
+    .order("created_at");
+  if (error) throw error;
+  return (data ?? []) as FilmWatch[];
+}
+
+function watchExpiry(): string {
+  return new Date(Date.now() + WATCH_DAYS * 86_400_000).toISOString();
+}
+
+/** Starts watching a folder for a game, or restarts an earlier watch of it. Staff only (RLS). */
+export async function watchFolder(
+  supabase: SupabaseClient,
+  gameId: string,
+  folderId: string,
+  folderName: string,
+): Promise<void> {
+  const { data: existing, error } = await supabase
+    .from("rr_film_watches")
+    .select("id")
+    .eq("game_id", gameId)
+    .eq("folder_id", folderId)
+    .maybeSingle();
+  if (error) throw error;
+  const result = existing
+    ? await supabase
+        .from("rr_film_watches")
+        .update({ active: true, expires_at: watchExpiry(), folder_name: folderName })
+        .eq("id", existing.id)
+    : await supabase
+        .from("rr_film_watches")
+        .insert({ game_id: gameId, folder_id: folderId, folder_name: folderName, expires_at: watchExpiry() });
+  if (result.error) throw result.error;
+}
+
+/** Pauses or resumes a watch; resuming runs it for another WATCH_DAYS. Staff only (RLS). */
+export async function setWatchActive(supabase: SupabaseClient, id: string, active: boolean): Promise<FilmWatch | null> {
+  const { data, error } = await supabase
+    .from("rr_film_watches")
+    .update(active ? { active, expires_at: watchExpiry() } : { active })
+    .eq("id", id)
+    .select(WATCH_COLUMNS)
+    .maybeSingle();
+  if (error) throw error;
+  return (data as FilmWatch) ?? null;
+}
+
+export interface TeamFilmInbox {
+  inboxId: string;
+  folderName: string | null;
+  folderId: string;
+  code: string;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  /** Recent game folders for this team, plus any whose team code didn't match. */
+  folders: {
+    id: string;
+    folder_name: string;
+    status: "matched" | "unmatched";
+    reason: string | null;
+    game_id: string | null;
+    team_id: string | null;
+    updated_at: string;
+  }[];
+}
+
+/** The film inbox linked to a team, if any (Woodinville teams for now). */
+export async function getTeamFilmInbox(supabase: SupabaseClient, teamId: string): Promise<TeamFilmInbox | null> {
+  const { data: link, error } = await supabase
+    .from("rr_film_inbox_teams")
+    .select("code, rr_film_inboxes(id, folder_id, folder_name, last_checked_at, last_error)")
+    .eq("team_id", teamId)
+    .maybeSingle();
+  if (error) throw error;
+  const inbox = (link as unknown as {
+    code: string;
+    rr_film_inboxes: { id: string; folder_id: string; folder_name: string | null; last_checked_at: string | null; last_error: string | null } | null;
+  } | null);
+  if (!inbox?.rr_film_inboxes) return null;
+  const { data: folders, error: foldersError } = await supabase
+    .from("rr_film_inbox_folders")
+    .select("id, folder_name, status, reason, game_id, team_id, updated_at")
+    .eq("inbox_id", inbox.rr_film_inboxes.id)
+    .or(`team_id.eq.${teamId},team_id.is.null`)
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  if (foldersError) throw foldersError;
+  return {
+    inboxId: inbox.rr_film_inboxes.id,
+    folderId: inbox.rr_film_inboxes.folder_id,
+    folderName: inbox.rr_film_inboxes.folder_name,
+    code: inbox.code,
+    lastCheckedAt: inbox.rr_film_inboxes.last_checked_at,
+    lastError: inbox.rr_film_inboxes.last_error,
+    folders: (folders ?? []) as TeamFilmInbox["folders"],
+  };
 }

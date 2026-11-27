@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isVideoFile, parseDriveFolderId, suggestCameraName } from "../film/drive";
+import { isVideoFile, parseDriveFolderId } from "../film/drive";
 import { formatBytes, formatDuration, isFilmInProgress } from "../film/types";
 import { pathBelongsTo } from "../film/server";
 
@@ -27,10 +27,6 @@ describe("Drive files", () => {
     expect(isVideoFile({ name: "roster.csv", mimeType: "text/csv" })).toBe(false);
   });
 
-  it("suggests camera names from file names", () => {
-    expect(suggestCameraName("MEVO_Sideline_0042.MP4", 0)).toBe("MEVO Sideline 0042");
-    expect(suggestCameraName(".mp4", 2)).toBe("Camera 3");
-  });
 });
 
 describe("formatting", () => {

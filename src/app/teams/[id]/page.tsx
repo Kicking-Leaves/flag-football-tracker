@@ -11,6 +11,8 @@ import {
 } from "@/lib/db";
 import type { Season } from "@/lib/types";
 import { ROLE_LABELS, can } from "@/lib/permissions";
+import { getTeamFilmInbox } from "@/lib/film/db";
+import FilmInboxCard from "./FilmInboxCard";
 import LeaveTeamButton from "./LeaveTeamButton";
 import NewSeasonForm from "./NewSeasonForm";
 import SeasonRowActions from "./SeasonRowActions";
@@ -37,9 +39,11 @@ export default async function TeamDashboardPage({
   if (!team || !role) notFound();
   const isStaff = can(role, "manageTeam");
 
-  const [seasons, schools] = await Promise.all([
+  const [seasons, schools, filmInbox] = await Promise.all([
     getSeasons(supabase, id),
     isStaff ? getSchools(supabase) : Promise.resolve([]),
+    // Film isn't required for the dashboard; skip the card if the lookup fails.
+    isStaff ? getTeamFilmInbox(supabase, id).catch(() => null) : Promise.resolve(null),
   ]);
 
   // For each season compute its record in parallel.
@@ -76,6 +80,8 @@ export default async function TeamDashboardPage({
             </Link>
           )}
         </div>
+
+        {filmInbox && <FilmInboxCard teamId={id} inbox={filmInbox} />}
 
         {isStaff && (
           <SchoolPicker

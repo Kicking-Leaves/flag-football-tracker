@@ -1,18 +1,21 @@
 import { gameAccess, requireManage, filmErrorResponse, UUID_RE } from "@/lib/film/access";
-import { createDriveCameras, deleteFilmCameraRow, getFilmCameras, type NewDriveCamera } from "@/lib/film/db";
+import { createDriveCameras, deleteFilmCameraRow, getFilmCameras, getFilmWatches, type NewDriveCamera } from "@/lib/film/db";
 import { FilmError, startFilmJob } from "@/lib/film/server";
 import { toCameraViews } from "@/lib/film/views";
 
 const MAX_CAMERAS = 8;
 
-/** GET → the game's cameras with thumbnail links. Anyone on the team. */
+/** GET → the game's cameras (with thumbnail links) and watched folders. Anyone on the team. */
 export async function GET(_request: Request, ctx: RouteContext<"/api/film/games/[gid]/cameras">) {
   try {
     const { gid } = await ctx.params;
     if (!UUID_RE.test(gid)) throw new FilmError("Game not found.", 404);
     const access = await gameAccess(gid);
-    const cameras = await getFilmCameras(access.supabase, gid);
-    return Response.json({ cameras: await toCameraViews(cameras) });
+    const [cameras, watches] = await Promise.all([
+      getFilmCameras(access.supabase, gid),
+      getFilmWatches(access.supabase, gid),
+    ]);
+    return Response.json({ cameras: await toCameraViews(cameras), watches });
   } catch (err) {
     return filmErrorResponse(err);
   }

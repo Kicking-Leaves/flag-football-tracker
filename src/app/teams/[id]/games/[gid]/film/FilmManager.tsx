@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { suggestCameraName, type DriveVideo } from "@/lib/film/drive";
+import type { DriveVideo } from "@/lib/film/drive";
 import {
   FILM_STATUS_LABELS,
   formatBytes,
   formatDuration,
   isFilmInProgress,
   type FilmCameraView,
+  type FilmWatch,
 } from "@/lib/film/types";
 
+/** Check often while film is copying; slowly while only waiting on a watched folder. */
 const POLL_MS = 5000;
+const WATCH_POLL_MS = 30_000;
 
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -29,37 +32,50 @@ function errorText(err: unknown, fallback: string) {
 export default function FilmManager({
   gameId,
   initialCameras,
+  initialWatches,
   canManage,
   configured,
   shareEmail,
 }: {
   gameId: string;
   initialCameras: FilmCameraView[];
+  initialWatches: FilmWatch[];
   canManage: boolean;
   configured: boolean;
   shareEmail: string | null;
 }) {
   const [cameras, setCameras] = useState(initialCameras);
+  const [watches, setWatches] = useState(initialWatches);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const working = cameras.some((c) => isFilmInProgress(c.status));
+  const watching = watches.some((w) => w.active);
 
   async function refresh() {
     try {
-      const { cameras: next } = await api<{ cameras: FilmCameraView[] }>(`/api/film/games/${gameId}/cameras`);
-      setCameras(next);
+      const next = await api<{ cameras: FilmCameraView[]; watches: FilmWatch[] }>(`/api/film/games/${gameId}/cameras`);
+      setCameras(next.cameras);
+      setWatches(next.watches);
     } catch {
       // Keep showing the last good list; the next poll will try again.
     }
   }
 
-  // While anything is copying or processing, check for progress.
+  // While anything is copying or a folder is being watched, check for progress.
   useEffect(() => {
-    if (!working) return;
-    const timer = setInterval(() => void refresh(), POLL_MS);
+    if (!working && !watching) return;
+    const timer = setInterval(() => void refresh(), working ? POLL_MS : WATCH_POLL_MS);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh only reads gameId
-  }, [working, gameId]);
+  }, [working, watching, gameId]);
+
+  function toggleWatch(w: FilmWatch) {
+    void act(
+      `watch:${w.id}`,
+      () => api(`/api/film/watches/${w.id}`, { method: "PATCH", body: JSON.stringify({ active: !w.active }) }),
+      w.active ? "Couldn't stop watching." : "Couldn't resume watching.",
+    );
+  }
 
   async function act(key: string, action: () => Promise<unknown>, fallback: string) {
     setBusy(key);
@@ -126,10 +142,73 @@ export default function FilmManager({
         )}
       </section>
 
+      {watches.length > 0 && (
+        <section className="mb-6 rounded-2xl bg-white p-5 shadow-xl">
+          <h3 className="mb-3 text-lg font-bold text-gray-800">Watched Drive folders</h3>
+          <ul className="space-y-2">
+            {watches.map((w) => (
+              <WatchRow key={w.id} watch={w} canManage={canManage} busy={busy} onToggle={() => toggleWatch(w)} />
+            ))}
+          </ul>
+        </section>
+      )}
+
       {canManage && configured && (
         <DriveImport gameId={gameId} shareEmail={shareEmail} cameraCount={cameras.length} onImported={refresh} />
       )}
     </>
+  );
+}
+
+function timeAgo(iso: string | null): string {
+  if (!iso) return "not checked yet";
+  const mins = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (mins < 1) return "checked just now";
+  if (mins < 60) return `checked ${mins} min ago`;
+  return `checked ${new Date(iso).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+}
+
+function WatchRow({
+  watch: w,
+  canManage,
+  busy,
+  onToggle,
+}: {
+  watch: FilmWatch;
+  canManage: boolean;
+  busy: string | null;
+  onToggle: () => void;
+}) {
+  // The watcher marks expired watches inactive on its next run.
+  const on = w.active;
+  return (
+    <li className="rounded-xl bg-gray-50 p-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 truncate font-semibold text-gray-800">{w.folder_name ?? "Drive folder"}</p>
+        <span
+          className={`rounded-full px-2 py-0.5 text-xs font-bold ${on ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
+        >
+          {on ? (w.source === "inbox" ? "Watching (from film inbox)" : "Watching") : "Stopped"}
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-gray-500">
+        {on
+          ? `New videos import automatically · ${timeAgo(w.last_checked_at)} · until ${new Date(w.expires_at).toLocaleDateString([], { month: "short", day: "numeric" })}`
+          : "Not checking for new videos"}
+        {w.imported_count > 0 && ` · ${w.imported_count} imported`}
+      </p>
+      {on && w.last_error && <p className="mt-1 text-xs text-red-700">{w.last_error}</p>}
+      {canManage && (
+        <button
+          type="button"
+          onClick={onToggle}
+          disabled={busy !== null}
+          className="mt-2 text-sm font-semibold text-blue-700 underline disabled:opacity-50"
+        >
+          {busy === `watch:${w.id}` ? "Saving…" : on ? "Stop watching" : "Watch again for 7 days"}
+        </button>
+      )}
+    </li>
   );
 }
 
@@ -237,6 +316,26 @@ function DriveImport({
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [watchingNow, setWatchingNow] = useState(false);
+
+  async function watch() {
+    if (!folder.trim()) {
+      setError("Paste the folder's link first.");
+      return;
+    }
+    setWatchingNow(true);
+    setError(null);
+    try {
+      await api(`/api/film/games/${gameId}/watches`, { method: "POST", body: JSON.stringify({ folder }) });
+      setFolder("");
+      setFiles(null);
+      await onImported();
+    } catch (err) {
+      setError(errorText(err, "Couldn't watch that folder."));
+    } finally {
+      setWatchingNow(false);
+    }
+  }
 
   async function findVideos(e: React.FormEvent) {
     e.preventDefault();
@@ -251,7 +350,7 @@ function DriveImport({
       setFolderName(res.folderName);
       setPicks(
         Object.fromEntries(
-          res.files.map((f, i) => [f.id, { selected: !f.imported, name: suggestCameraName(f.name, cameraCount + i) }]),
+          res.files.map((f, i) => [f.id, { selected: !f.imported, name: `Camera ${cameraCount + i + 1}` }]),
         ),
       );
     } catch (err) {
@@ -314,7 +413,11 @@ function DriveImport({
           </button>
           {copied && <span className="ml-1 text-green-700">Copied</span>}
         </li>
-        <li>Paste the folder&apos;s link here.</li>
+        <li>
+          Paste the folder&apos;s link, then either pick videos now with <strong>Find videos</strong>, or tap{" "}
+          <strong>Watch folder</strong> to import every video automatically as it finishes uploading (checked every 20
+          minutes for 7 days). You can set up the watch before the game.
+        </li>
       </ol>
 
       <form onSubmit={findVideos} className="flex gap-2">
@@ -326,10 +429,18 @@ function DriveImport({
           onChange={(e) => setFolder(e.target.value)}
           className="min-w-0 flex-1 rounded-xl border-2 border-gray-300 px-3 py-2 text-sm"
         />
-        <button type="submit" disabled={loading} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+        <button type="submit" disabled={loading || watchingNow} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
           {loading ? "Looking…" : "Find videos"}
         </button>
       </form>
+      <button
+        type="button"
+        onClick={watch}
+        disabled={loading || watchingNow}
+        className="mt-2 w-full rounded-xl border-2 border-blue-600 py-2 text-sm font-bold text-blue-700 disabled:opacity-50"
+      >
+        {watchingNow ? "Setting up…" : "Watch folder: import new videos automatically"}
+      </button>
 
       {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
 

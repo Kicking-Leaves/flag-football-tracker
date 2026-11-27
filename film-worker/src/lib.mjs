@@ -93,3 +93,125 @@ export function shortError(err) {
   const text = err instanceof Error ? err.message : String(err);
   return text.length > 500 ? `${text.slice(0, 497)}...` : text;
 }
+
+/** True for files we import as camera film (same rule as the app). */
+export function isVideoFile(file) {
+  if (file?.mimeType?.startsWith("video/")) return true;
+  return /\.(mp4|mov|m4v)$/i.test(file?.name ?? "");
+}
+
+/** Minimum quiet time after a file's last change before the watcher imports it. */
+export const SETTLE_MS = 2 * 60_000;
+
+/**
+ * Whether a Drive file has finished uploading. Drive only reports an MD5 once a
+ * file's content is complete; waiting a couple of minutes after the last change
+ * also skips files a sync client is still rewriting.
+ */
+export function readyToImport(file, now = Date.now()) {
+  if (!isVideoFile(file)) return false;
+  if (!file.md5Checksum || !(Number(file.size) > 0)) return false;
+  const changed = Date.parse(file.modifiedTime ?? "");
+  return Number.isFinite(changed) && now - changed >= SETTLE_MS;
+}
+
+/** Files a watch should import now: finished videos not already in the game, up to the camera limit. */
+export function filesToImport(files, importedIds, cameraCount, maxCameras, now = Date.now()) {
+  const room = Math.max(0, maxCameras - cameraCount);
+  return files
+    .filter((f) => !importedIds.has(f.id) && readyToImport(f, now))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+    .slice(0, room);
+}
+
+// ---------- Film inbox: game folder names ----------
+
+/** Lowercase letters and digits only, for loose name matching. */
+export function squash(text) {
+  return String(text ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isoDate(y, m, d) {
+  const year = y < 100 ? 2000 + y : y;
+  const date = new Date(Date.UTC(year, m - 1, d));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+/** "12-2-26", "12-02-2026", "2026-12-02" (also with dots) → "2026-12-02". */
+export function parseFolderDate(text) {
+  const parts = String(text).split(/[-.]/).map((p) => p.trim());
+  if (parts.length !== 3 || !parts.every((p) => /^\d{1,4}$/.test(p))) return null;
+  const [a, b, c] = parts.map(Number);
+  if (parts[0].length === 4) return isoDate(a, b, c); // year first
+  if (parts[2].length === 2 || parts[2].length === 4) return isoDate(c, a, b); // US month-day-year
+  return null;
+}
+
+/**
+ * Parses a game folder name: <code>_<date>_<opponent>[_<n>].
+ * The opponent may itself contain underscores ("mount_si"). Returns
+ * { code, date, opponent, game } or { error } with a reason a coach can act on.
+ */
+export function parseGameFolderName(name) {
+  const parts = String(name ?? "").trim().split(/_+/).filter(Boolean);
+  const example = "Use team_date_opponent_#, e.g. varsity_12-2-26_monroe_1.";
+  if (parts.length < 3) return { error: `Name doesn't follow the pattern. ${example}` };
+  const code = squash(parts[0]);
+  const date = parseFolderDate(parts[1]);
+  if (!date) return { error: `"${parts[1]}" isn't a date like 12-2-26. ${example}` };
+  let rest = parts.slice(2);
+  let game = 1;
+  if (rest.length > 1 && /^\d{1,2}$/.test(rest.at(-1))) {
+    game = Number(rest.at(-1));
+    rest = rest.slice(0, -1);
+  }
+  const opponent = rest.join(" ").trim();
+  if (!code || !squash(opponent) || game < 1) return { error: `Name doesn't follow the pattern. ${example}` };
+  return { code, date, opponent, game };
+}
+
+const SCHOOL_WORDS = /(highschool|high|school|hs|academy|prep)$/;
+
+/** Loose opponent match: "monroe" ~ "Monroe", "Monroe HS", "Monroe High School". */
+export function opponentMatches(folderOpponent, gameOpponent) {
+  const a = squash(folderOpponent);
+  const b = squash(gameOpponent);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const strip = (s) => {
+    let out = s;
+    while (SCHOOL_WORDS.test(out) && out.replace(SCHOOL_WORDS, "")) out = out.replace(SCHOOL_WORDS, "");
+    return out;
+  };
+  return strip(a) === strip(b);
+}
+
+/** A game's calendar date where the team plays (Pacific time). */
+export function localGameDate(gameDate, timeZone = "America/Los_Angeles") {
+  const t = Date.parse(gameDate);
+  if (!Number.isFinite(t)) return null;
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(t);
+}
+
+/**
+ * Picks the scorekeeper's game for a parsed folder name from the team's games
+ * ({ id, game_date, opponent_name, created_at }). Returns { gameId } or { error }.
+ */
+export function matchGame(parsed, games, timeZone = "America/Los_Angeles") {
+  const sameDay = games.filter((g) => localGameDate(g.game_date, timeZone) === parsed.date);
+  const [y, m, d] = parsed.date.split("-").map(Number);
+  const when = `${m}/${d}/${String(y).slice(2)}`;
+  if (sameDay.length === 0) return { error: `No game logged on ${when} yet. It'll match once the scorekeeper creates it.` };
+  const matches = sameDay
+    .filter((g) => opponentMatches(parsed.opponent, g.opponent_name))
+    .sort((a, b) => Date.parse(a.game_date) - Date.parse(b.game_date) || Date.parse(a.created_at) - Date.parse(b.created_at));
+  if (matches.length === 0) {
+    const names = [...new Set(sameDay.map((g) => g.opponent_name))].join(", ");
+    return { error: `No game against "${parsed.opponent}" on ${when}. Games that day: ${names}.` };
+  }
+  if (parsed.game > matches.length) {
+    return { error: `Only ${matches.length} game${matches.length === 1 ? "" : "s"} against ${matches[0].opponent_name} on ${when}, so there's no game ${parsed.game}.` };
+  }
+  return { gameId: matches[parsed.game - 1].id };
+}
