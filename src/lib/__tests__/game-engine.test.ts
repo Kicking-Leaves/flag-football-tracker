@@ -48,6 +48,16 @@ function runPlay(yards: number, opts: Record<string, unknown> = {}) {
   };
 }
 
+/** A real game tied 7-7 at the end of regulation, in overtime with the team first. */
+function tiedForOvertime() {
+  let state = makeGameState();
+  state = addPlay(state, passPlay(45, { touchdown: true }));
+  state = recordPointAfter(state, { type: 1, success: true });
+  state = addPlay(state, opponentRunPlay(45, { touchdown: true }));
+  state = recordPointAfter(state, { type: 1, success: true });
+  return startOvertime(state, "team");
+}
+
 function opponentRunPlay(yards: number, opts: Record<string, unknown> = {}) {
   return {
     possession: "opponent" as const,
@@ -295,14 +305,15 @@ describe("addPlay — coverage sack", () => {
   });
 
   it("counts as an offensive play but not a pass or rush attempt; undo reverses it", () => {
-    const state = makeGameState({ lineOfScrimmage: 10, firstDownTarget: 17, down: 1 });
+    // Undo rebuilds from the log, so reach the spot through real plays.
+    const state = addPlay(makeGameState(), runPlay(5)); // 2nd down at the 10
     const next = addPlay(state, sack());
     expect(next.stats.offense.totalPlays).toBe(state.stats.offense.totalPlays + 1);
     expect(next.stats.offense.passAttempts).toBe(state.stats.offense.passAttempts);
     expect(next.stats.offense.rushAttempts).toBe(state.stats.offense.rushAttempts);
     const undone = undoLastPlay(next);
     expect(undone.stats.offense.totalPlays).toBe(state.stats.offense.totalPlays);
-    expect(undone.down).toBe(1);
+    expect(undone.down).toBe(2);
     expect(undone.lineOfScrimmage).toBe(10);
   });
 });
@@ -875,7 +886,8 @@ describe("undoLastPlay", () => {
 
 describe("undoLastPlay — tries and possession changes", () => {
   it("undo a 3pt try: points come off, scoring team is back on the try", () => {
-    let state = makeGameState({ lineOfScrimmage: 30, firstDownTarget: 33, down: 2 });
+    let state = addPlay(makeGameState(), runPlay(25)); // 1st down at the 30
+    state = addPlay(state, runPlay(0)); // 2nd down
     state = addPlay(state, passPlay(20, { touchdown: true })); // 6-0
     state = recordPointAfter(state, { type: 3, success: true }); // 9-0, opp ball
     expect(state.possession).toBe("opponent");
@@ -894,7 +906,8 @@ describe("undoLastPlay — tries and possession changes", () => {
   });
 
   it("undo a failed try leaves the score and restores possession", () => {
-    let state = makeGameState({ possession: "opponent", score: { team: 0, opponent: 6 } });
+    let state = makeGameState({ possession: "opponent" });
+    state = addPlay(state, opponentRunPlay(45, { touchdown: true }));
     state = recordPointAfter(state, { type: 2, success: false });
     const undone = undoLastPlay(state);
     expect(undone.score.opponent).toBe(6);
@@ -902,16 +915,8 @@ describe("undoLastPlay — tries and possession changes", () => {
   });
 
   it("undo the game-ending OT conversion reopens the game in the same round", () => {
-    let state = makeGameState({
-      isOvertime: true,
-      half: "OT",
-      overtimeRound: 1,
-      overtimeFirstOffense: "team",
-      possession: "team",
-      awaitingOvertimeConversion: true,
-      score: { team: 6, opponent: 6 },
-    });
-    state = handleOvertimeConversion(state, { type: 1, success: true }); // 7-6
+    let state = tiedForOvertime(); // 7-7, team first
+    state = handleOvertimeConversion(state, { type: 1, success: true }); // 8-7
     state = handleOvertimeConversion(state, { type: 3, success: false }); // final
     expect(state.completed).toBe(true);
 
@@ -921,31 +926,26 @@ describe("undoLastPlay — tries and possession changes", () => {
     expect(undone.awaitingOvertimeConversion).toBe(true);
     expect(undone.possession).toBe("opponent");
     expect(undone.overtimeRound).toBe(1);
-    expect(undone.score).toEqual({ team: 7, opponent: 6 });
+    expect(undone.score).toEqual({ team: 8, opponent: 7 });
   });
 
   it("undo the OT conversion that started a new round goes back to the old round", () => {
-    let state = makeGameState({
-      isOvertime: true,
-      half: "OT",
-      overtimeRound: 1,
-      overtimeFirstOffense: "team",
-      possession: "team",
-      awaitingOvertimeConversion: true,
-      score: { team: 6, opponent: 6 },
-    });
-    state = handleOvertimeConversion(state, { type: 2, success: true }); // 8-6
-    state = handleOvertimeConversion(state, { type: 2, success: true }); // 8-8 → round 2
+    let state = tiedForOvertime(); // 7-7, team first
+    state = handleOvertimeConversion(state, { type: 2, success: true }); // 9-7
+    state = handleOvertimeConversion(state, { type: 2, success: true }); // 9-9 → round 2
     expect(state.overtimeRound).toBe(2);
 
     const undone = undoLastPlay(state);
     expect(undone.overtimeRound).toBe(1);
     expect(undone.possession).toBe("opponent");
-    expect(undone.score).toEqual({ team: 8, opponent: 6 });
+    expect(undone.score).toEqual({ team: 9, opponent: 7 });
   });
 
   it("undo a punt gives the ball back to the punting team", () => {
-    const state = makeGameState({ possession: "opponent", lineOfScrimmage: 12, down: 4 });
+    let state = makeGameState({ possession: "opponent" });
+    state = addPlay(state, opponentRunPlay(7)); // 2nd at the 12
+    state = addPlay(state, opponentRunPlay(0));
+    state = addPlay(state, opponentRunPlay(0)); // 4th at the 12
     const after = addPlay(state, { possession: "opponent", playType: "punt", isPunt: true, yards: 0 });
     expect(after.possession).toBe("team");
     expect(after.stats.defense.forcedPunts).toBe(1);
@@ -967,7 +967,7 @@ describe("undoLastPlay — tries and possession changes", () => {
   });
 
   it("undo a safety takes the 2 points back and restores possession", () => {
-    const state = makeGameState({ lineOfScrimmage: 3, down: 2 });
+    const state = addPlay(makeGameState(), runPlay(-2)); // 2nd down at the 3
     const after = addPlay(state, runPlay(-4, { safety: true }));
     expect(after.score.opponent).toBe(2);
     const undone = undoLastPlay(after);

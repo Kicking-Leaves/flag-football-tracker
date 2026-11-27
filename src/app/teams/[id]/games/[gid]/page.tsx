@@ -1,8 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getGame, getMyTeamRole, getTeam } from "@/lib/db";
+import { getGame, getMyTeamRole, getPlayers, getTeam } from "@/lib/db";
 import { can } from "@/lib/permissions";
 import GameTracker from "./GameTracker";
+import StartGame from "./StartGame";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,22 @@ export default async function GamePage({
   if (game.team_id !== teamId) notFound();
   // Players and parents follow along on the stats page.
   if (!can(role, "scoreGame")) redirect(`/teams/${teamId}/games/${gameId}/stats`);
+
+  if (game.status === "scheduled") {
+    const players = await getPlayers(supabase, teamId, game.season_id ?? null);
+    return (
+      <StartGame
+        teamId={teamId}
+        gameId={gameId}
+        teamName={team.name}
+        opponentName={game.opponent_name}
+        gameDate={game.game_date}
+        gameType={game.game_type ?? "regular"}
+        players={players}
+        backHref={game.season_id ? `/teams/${teamId}/seasons/${game.season_id}` : `/teams/${teamId}`}
+      />
+    );
+  }
 
   return (
     <GameTracker

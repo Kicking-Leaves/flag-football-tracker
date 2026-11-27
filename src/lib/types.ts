@@ -100,7 +100,8 @@ export const DEFENSE_POSITIONS = [
 ] as const;
 export type DefensePosition = (typeof DEFENSE_POSITIONS)[number];
 
-export type GameStatus = "in_progress" | "completed";
+/** scheduled = created but scoring hasn't started. */
+export type GameStatus = "scheduled" | "in_progress" | "completed";
 
 /** Scrimmages don't count toward season stats; regular and postseason games do. */
 export const GAME_TYPES = ["scrimmage", "regular", "postseason"] as const;
@@ -179,6 +180,8 @@ export interface PlayerStats {
      * (see sacks.ts), so stored game blobs may not carry it.
      */
     sacks?: number;
+    /** Caught an opponent's fumble before it hit the ground (play log). */
+    fumbleRecoveries?: number;
   };
 }
 
@@ -213,15 +216,42 @@ export interface SackStats {
   coverageSacksAllowed: number;
 }
 
+/** Fumble totals for one game or season, counted from the play log. */
+export interface FumbleStats {
+  /** Our ball carriers' fumbles. */
+  fumbles: number;
+  /** Of those, caught by the defense (change of possession). */
+  fumblesLost: number;
+  /** Opponent fumbles our defense caught. */
+  recoveries: number;
+}
+
 export interface TeamStats {
   offense: OffenseStats;
   defense: DefenseStats;
 }
 
 /** A recorded play in a game. The pre-play snapshot is captured so undo works. */
+/** How a sack happened: flag pulled before the throw, or the 7-second count ran out. */
+export type SackType = "player" | "coverage";
+/**
+ * Fumble outcome. "dead": the ball is dead where it was fumbled. "lost": the
+ * defense caught it before it touched the ground and takes over there.
+ */
+export type FumbleResult = "dead" | "lost";
+
+/**
+ * Log entries that aren't snaps: end of the 1st half (possession = who
+ * receives), start of overtime (possession = first offense) and manual score
+ * changes (possession = side, points = amount). Kept in the log so a game can
+ * be rebuilt from it after edits.
+ */
+export type MarkerType = "half_end" | "overtime_start" | "score_adjustment";
+
 export interface Play {
   id: number;
-  playType: "pass" | "run" | "punt" | "coverage_sack" | "penalty" | "point_after";
+  /** "coverage_sack" is legacy: newer games record a pass with sackType "coverage". */
+  playType: "pass" | "run" | "punt" | "coverage_sack" | "penalty" | "point_after" | MarkerType;
   possession?: Possession;
   yards: number;
   complete?: boolean;
@@ -234,8 +264,13 @@ export interface Play {
   flagPull?: boolean;
   safety?: boolean;
   passDeflection?: boolean;
-  /** Pass play: the passer's flag was pulled before the throw. */
+  /** Pass play ended in a sack (see sackType). */
   sack?: boolean;
+  /** Missing on older plays with sack: true, which were player sacks. */
+  sackType?: SackType;
+  fumble?: FumbleResult;
+  /** Interception not returned for a TD: where the intercepting team takes over. */
+  returnSpot?: number;
   isPunt?: boolean;
   passer?: string | null;
   receiver?: string | null;
@@ -260,6 +295,11 @@ export interface Play {
   // Penalty-only fields.
   onOffense?: boolean;
   lossOfDown?: boolean;
+  automaticFirstDown?: boolean;
+  /** Penalty from the WIAA list (see penalties.ts), or "other". */
+  penaltyCode?: string;
+  /** Free-text name for an "other" penalty. */
+  penaltyName?: string;
 
   // Point-after / overtime conversion.
   attempt?: TryPoints;
@@ -276,6 +316,8 @@ export interface GameState {
   teamName?: string;
   opponentName?: string;
   roster?: { id: string; name: string; number: string }[];
+  /** Who had the ball first; lets the game be rebuilt from its play log. */
+  firstPossession?: Possession;
 
   score: { team: number; opponent: number };
   possession: Possession;
@@ -314,6 +356,7 @@ export interface SeasonStats {
   offense: OffenseStats;
   defense: DefenseStats;
   sacks: SackStats;
+  fumbles: FumbleStats;
   /** Aggregated by player id (string uuid). */
   playerStats: Record<string, PlayerStats>;
 }
@@ -324,6 +367,8 @@ export interface PlayData {
   possession: Possession;
   playType: "pass" | "run" | "punt" | "coverage_sack";
   yards: number;
+  sackType?: SackType;
+  fumble?: FumbleResult;
   complete?: boolean;
   firstDown?: boolean;
   touchdown?: boolean;
@@ -359,6 +404,9 @@ export interface PenaltyData {
   yards: number;
   onOffense: boolean;
   lossOfDown: boolean;
+  automaticFirstDown?: boolean;
+  penaltyCode?: string;
+  penaltyName?: string;
 }
 
 export interface OTConversionData {

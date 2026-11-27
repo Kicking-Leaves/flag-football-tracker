@@ -92,7 +92,8 @@ export function defenseRows(
         p.defense.interceptions > 0 ||
         p.defense.tacklesForLoss > 0 ||
         p.defense.passDeflections > 0 ||
-        (p.defense.sacks ?? 0) > 0,
+        (p.defense.sacks ?? 0) > 0 ||
+        (p.defense.fumbleRecoveries ?? 0) > 0,
     )
     .map((p) => [
       `#${p.number} ${p.name}`,
@@ -101,5 +102,6 @@ export function defenseRows(
       p.defense.sacks ?? 0,
       p.defense.interceptions,
       p.defense.passDeflections,
+      p.defense.fumbleRecoveries ?? 0,
     ]);
 }

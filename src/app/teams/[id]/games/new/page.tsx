@@ -8,12 +8,11 @@ import {
   createGame,
   getActiveSeason,
   getMyTeamRole,
-  getPlayers,
   getSeasons,
   getTeam,
 } from "@/lib/db";
 import { makeInitialGameState } from "@/lib/game-engine";
-import type { GameType, Player, Possession, Season } from "@/lib/types";
+import type { GameType, Season } from "@/lib/types";
 import { GAME_TYPES, GAME_TYPE_LABELS } from "@/lib/types";
 import { can } from "@/lib/permissions";
 
@@ -38,10 +37,6 @@ export default function NewGamePage({
     return d.toISOString().slice(0, 10);
   });
   const [gameType, setGameType] = useState<GameType>("regular");
-  const [firstPossession, setFirstPossession] =
-    useState<Possession>("team");
-  const [players, setPlayers] = useState<Player[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -92,60 +87,15 @@ export default function NewGamePage({
     void loadShell();
   }, [loadShell]);
 
-  // Whenever the active season changes, reload its players.
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!seasonId) {
-        setPlayers([]);
-        setSelected(new Set());
-        return;
-      }
-      try {
-        const list = await getPlayers(supabase, teamId, seasonId);
-        if (cancelled) return;
-        const active = (list as Player[]).filter((p) => p.active);
-        setPlayers(active);
-        setSelected(new Set(active.map((p) => p.id)));
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : "Failed to load roster",
-          );
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seasonId, teamId]);
-
-  function toggle(id: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function handleStart(e: React.FormEvent) {
+  async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
-    if (!opponent.trim() || selected.size === 0) return;
+    if (!opponent.trim()) return;
     setCreating(true);
     setError(null);
     try {
-      const roster = players
-        .filter((p) => selected.has(p.id))
-        .map((p) => ({ id: p.id, name: p.name, number: p.number }));
-      const state = makeInitialGameState(
-        roster,
-        firstPossession,
-        teamName,
-        opponent.trim(),
-      );
-      const game = await createGame(
+      // The game-day roster and first possession are set when scoring starts.
+      const state = makeInitialGameState([], "team", teamName, opponent.trim());
+      await createGame(
         supabase,
         teamId,
         seasonId,
@@ -154,7 +104,7 @@ export default function NewGamePage({
         state,
         gameType,
       );
-      router.push(`/teams/${teamId}/games/${game.id}`);
+      router.push(seasonId ? `/teams/${teamId}/seasons/${seasonId}` : `/teams/${teamId}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create game");
@@ -177,7 +127,9 @@ export default function NewGamePage({
             ← {teamName || "Team"}
           </Link>
           <h1 className="mt-2 text-3xl font-bold">New Game</h1>
-          <p className="text-blue-100">Set up a new game and start tracking.</p>
+          <p className="text-blue-100">
+            Add a game to the schedule. Start scoring from the season page on game day.
+          </p>
         </div>
 
         {loading ? (
@@ -186,7 +138,7 @@ export default function NewGamePage({
           </p>
         ) : (
           <form
-            onSubmit={handleStart}
+            onSubmit={handleCreate}
             className="space-y-4 rounded-2xl bg-white p-6 shadow-xl"
           >
             <div>
@@ -275,89 +227,6 @@ export default function NewGamePage({
               )}
             </div>
 
-            <div>
-              <label className="mb-2 block text-sm font-bold text-gray-700">
-                First possession
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setFirstPossession("team")}
-                  className={`rounded-xl py-3 font-bold ${
-                    firstPossession === "team"
-                      ? "bg-gradient-to-r from-green-500 to-green-600 text-white shadow-lg"
-                      : "bg-gray-100 text-gray-700"
-                  }`}
-                >
-                  {teamName || "Your team"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFirstPossession("opponent")}
-                  className={`rounded-xl py-3 font-bold ${
-                    firstPossession === "opponent"
-                      ? "bg-gradient-to-r from-blue-500 to-blue-600 text-white shadow-lg"
-                      : "bg-gray-100 text-gray-700"
-                  }`}
-                >
-                  {opponent || "Opponent"}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-2 block text-sm font-bold text-gray-700">
-                Roster for this game ({selected.size} of {players.length})
-              </label>
-              {players.length === 0 ? (
-                <div className="rounded-xl bg-yellow-50 p-4 text-sm text-yellow-800">
-                  No active players in this season.{" "}
-                  {seasonId ? (
-                    <Link
-                      href={`/teams/${teamId}/roster?season=${seasonId}`}
-                      className="underline"
-                    >
-                      Add players first
-                    </Link>
-                  ) : (
-                    <Link
-                      href={`/teams/${teamId}/roster`}
-                      className="underline"
-                    >
-                      Add players first
-                    </Link>
-                  )}
-                  .
-                </div>
-              ) : (
-                <ul className="max-h-72 space-y-2 overflow-y-auto">
-                  {players
-                    .slice()
-                    .sort(
-                      (a, b) =>
-                        Number(a.number) - Number(b.number) ||
-                        a.name.localeCompare(b.name),
-                    )
-                    .map((p) => (
-                      <li
-                        key={p.id}
-                        className="flex items-center gap-3 rounded-xl bg-gray-50 p-3"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selected.has(p.id)}
-                          onChange={() => toggle(p.id)}
-                          className="h-5 w-5"
-                        />
-                        <span className="font-semibold">
-                          #{p.number} {p.name}
-                        </span>
-                      </li>
-                    ))}
-                </ul>
-              )}
-            </div>
-
             {error && <p className="text-sm text-red-600">{error}</p>}
 
             <div className="grid grid-cols-2 gap-3">
@@ -369,16 +238,10 @@ export default function NewGamePage({
               </Link>
               <button
                 type="submit"
-                disabled={
-                  creating ||
-                  !opponent.trim() ||
-                  selected.size === 0 ||
-                  players.length === 0 ||
-                  !seasonId
-                }
+                disabled={creating || !opponent.trim() || !seasonId}
                 className="rounded-xl bg-gradient-to-r from-green-600 to-green-700 py-4 font-bold text-white shadow-lg disabled:opacity-50"
               >
-                {creating ? "Starting…" : "Start Game"}
+                {creating ? "Creating…" : "Create Game"}
               </button>
             </div>
           </form>

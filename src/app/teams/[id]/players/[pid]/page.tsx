@@ -14,7 +14,7 @@ import {
 import type { Game, PlayerStats, Season } from "@/lib/types";
 import { GAME_TYPE_LABELS, countsForSeason } from "@/lib/types";
 import { makeEmptyPlayerStats } from "@/lib/game-engine";
-import { playerStatsWithSacks } from "@/lib/sacks";
+import { playerStatsWithDerived } from "@/lib/derived-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +63,7 @@ function aggregateCareer(
     if (g.status !== "completed" || !countsForSeason(g)) continue;
     const gd = g.game_data;
     if (!gd?.playerStats) continue;
-    const match = Object.values(playerStatsWithSacks(gd)).find(
+    const match = Object.values(playerStatsWithDerived(gd)).find(
       (ps) => ps.name === name && ps.number === number,
     );
     if (!match) continue;
@@ -83,6 +83,8 @@ function aggregateCareer(
     total.defense.tacklesForLoss += match.defense.tacklesForLoss ?? 0;
     total.defense.passDeflections += match.defense.passDeflections ?? 0;
     total.defense.sacks = (total.defense.sacks ?? 0) + (match.defense.sacks ?? 0);
+    total.defense.fumbleRecoveries =
+      (total.defense.fumbleRecoveries ?? 0) + (match.defense.fumbleRecoveries ?? 0);
   }
   return { total, matchedGames };
 }
