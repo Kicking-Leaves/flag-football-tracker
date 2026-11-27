@@ -101,6 +101,34 @@ export const DEFENSE_POSITIONS = [
 export type DefensePosition = (typeof DEFENSE_POSITIONS)[number];
 
 export type GameStatus = "in_progress" | "completed";
+
+/** Scrimmages don't count toward season stats; regular and postseason games do. */
+export const GAME_TYPES = ["scrimmage", "regular", "postseason"] as const;
+export type GameType = (typeof GAME_TYPES)[number];
+export const GAME_TYPE_LABELS: Record<GameType, string> = {
+  scrimmage: "Scrimmage",
+  regular: "Regular season",
+  postseason: "Postseason",
+};
+
+/** True when the game's stats count toward the season (not a scrimmage). */
+export function countsForSeason(game: { game_type?: GameType | null }): boolean {
+  return (game.game_type ?? "regular") !== "scrimmage";
+}
+
+/** Which games a season export covers. "full" = regular season + postseason. */
+export type SeasonScope = "regular" | "postseason" | "full";
+export const SEASON_SCOPE_LABELS: Record<SeasonScope, string> = {
+  regular: "Regular season",
+  postseason: "Postseason",
+  full: "Full season",
+};
+
+export function inSeasonScope(game: { game_type?: GameType | null }, scope: SeasonScope): boolean {
+  const type = game.game_type ?? "regular";
+  if (type === "scrimmage") return false;
+  return scope === "full" || type === scope;
+}
 export type GameResult = "win" | "loss" | "tie";
 
 export interface Game {
@@ -110,6 +138,8 @@ export interface Game {
   season_id?: string | null;
   opponent_name: string;
   game_date: string;
+  /** Defaults to "regular" in the database. */
+  game_type?: GameType;
   status: GameStatus;
   result: GameResult | null;
   game_data: GameState;
@@ -144,6 +174,11 @@ export interface PlayerStats {
     interceptions: number;
     tacklesForLoss: number;
     passDeflections: number;
+    /**
+     * Pulled the passer's flag before the throw. Counted from the play log
+     * (see sacks.ts), so stored game blobs may not carry it.
+     */
+    sacks?: number;
   };
 }
 
@@ -164,6 +199,18 @@ export interface DefenseStats {
   interceptions: number;
   forcedPunts: number;
   turnoversOnDowns: number;
+}
+
+/** Sack totals for one game or season, counted from the play log. */
+export interface SackStats {
+  /** Our defense pulled the passer's flag before the throw. */
+  playerSacks: number;
+  /** Our defense: the passer didn't throw within the 7-second count. */
+  coverageSacks: number;
+  /** Our passer had their flag pulled before the throw. */
+  sackedAllowed: number;
+  /** Our passer didn't throw within the 7-second count. */
+  coverageSacksAllowed: number;
 }
 
 export interface TeamStats {
@@ -187,6 +234,8 @@ export interface Play {
   flagPull?: boolean;
   safety?: boolean;
   passDeflection?: boolean;
+  /** Pass play: the passer's flag was pulled before the throw. */
+  sack?: boolean;
   isPunt?: boolean;
   passer?: string | null;
   receiver?: string | null;
@@ -264,6 +313,7 @@ export interface SeasonStats {
   totalPointsAgainst: number;
   offense: OffenseStats;
   defense: DefenseStats;
+  sacks: SackStats;
   /** Aggregated by player id (string uuid). */
   playerStats: Record<string, PlayerStats>;
 }
@@ -282,6 +332,7 @@ export interface PlayData {
   flagPull?: boolean;
   safety?: boolean;
   passDeflection?: boolean;
+  sack?: boolean;
   isPunt?: boolean;
   passer?: string | null;
   receiver?: string | null;

@@ -56,6 +56,7 @@ export function makeEmptyPlayerStats(name: string, number: string): PlayerStats 
       interceptions: 0,
       tacklesForLoss: 0,
       passDeflections: 0,
+      sacks: 0,
     },
   };
 }

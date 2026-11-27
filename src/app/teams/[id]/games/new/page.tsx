@@ -13,7 +13,8 @@ import {
   getTeam,
 } from "@/lib/db";
 import { makeInitialGameState } from "@/lib/game-engine";
-import type { Player, Possession, Season } from "@/lib/types";
+import type { GameType, Player, Possession, Season } from "@/lib/types";
+import { GAME_TYPES, GAME_TYPE_LABELS } from "@/lib/types";
 import { can } from "@/lib/permissions";
 
 export default function NewGamePage({
@@ -36,6 +37,7 @@ export default function NewGamePage({
     const d = new Date();
     return d.toISOString().slice(0, 10);
   });
+  const [gameType, setGameType] = useState<GameType>("regular");
   const [firstPossession, setFirstPossession] =
     useState<Possession>("team");
   const [players, setPlayers] = useState<Player[]>([]);
@@ -150,6 +152,7 @@ export default function NewGamePage({
         opponent.trim(),
         new Date(`${gameDate}T12:00:00`).toISOString(),
         state,
+        gameType,
       );
       router.push(`/teams/${teamId}/games/${game.id}`);
       router.refresh();
@@ -243,6 +246,33 @@ export default function NewGamePage({
                 onChange={(e) => setGameDate(e.target.value)}
                 className="w-full rounded-xl border-2 border-gray-300 px-4 py-3 font-semibold focus:border-blue-500 focus:outline-none"
               />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-bold text-gray-700">
+                Game type
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                {GAME_TYPES.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setGameType(t)}
+                    className={`rounded-xl px-1 py-3 text-sm font-bold ${
+                      gameType === t
+                        ? "bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-lg"
+                        : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    {GAME_TYPE_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+              {gameType === "scrimmage" && (
+                <p className="mt-2 text-sm text-gray-600">
+                  Scrimmage stats don&apos;t count toward season stats.
+                </p>
+              )}
             </div>
 
             <div>

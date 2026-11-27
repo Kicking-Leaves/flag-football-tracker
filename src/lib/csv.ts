@@ -5,13 +5,19 @@
 // and the season-export totals.
 
 import type {
+  DefenseStats,
   Game,
   GameState,
+  OffenseStats,
   Play,
   PlayerStats,
   Possession,
+  SackStats,
+  SeasonScope,
   SeasonStats,
 } from "./types";
+import { GAME_TYPE_LABELS, SEASON_SCOPE_LABELS, inSeasonScope } from "./types";
+import { gameSackStats, playerStatsWithSacks } from "./sacks";
 
 type Row = (string | number)[];
 
@@ -31,49 +37,46 @@ function playerLabel(p: PlayerStats): string {
   return `#${p.number} ${p.name}`;
 }
 
-// ---------- Per-game CSV ----------
+// ---------- Shared sections ----------
 
-export function generateGameCSV(
-  game: Pick<Game, "opponent_name" | "game_date"> & {
-    teamName?: string;
-    game_data: GameState;
-  },
-): string {
-  const gd = game.game_data;
-  const teamName = game.teamName ?? gd.teamName ?? "Team";
-  const opponent = game.opponent_name ?? gd.opponentName ?? "Opponent";
-  const playerStats = Object.values(gd.playerStats ?? {});
-
-  const rows: Row[] = [
-    ["Flag Football Game Stats"],
-    ["Date", new Date(game.game_date).toLocaleDateString()],
-    ["Teams", `${teamName} vs ${opponent}`],
-    ["Final Score", `${gd.score.team} - ${gd.score.opponent}`],
+function teamStatRows(
+  offense: OffenseStats,
+  defense: DefenseStats,
+  sacks: SackStats,
+  heading = "TEAM STATS - ",
+): Row[] {
+  return [
+    [`${heading}OFFENSE`],
+    ["Total Plays", offense.totalPlays],
+    ["First Downs", offense.firstDowns],
+    ["Touchdowns", offense.touchdowns],
+    ["Pass Attempts", offense.passAttempts],
+    ["Completions", offense.completions],
+    ["Passing Yards", offense.passingYards],
+    ["Rush Attempts", offense.rushAttempts],
+    ["Rushing Yards", offense.rushingYards],
+    ["Total Yards", offense.passingYards + offense.rushingYards],
+    ["Interceptions Thrown", offense.interceptions ?? 0],
+    ["Sacked (Player Sacks Allowed)", sacks.sackedAllowed],
+    ["Coverage Sacks Allowed", sacks.coverageSacksAllowed],
     [],
-    ["TEAM STATS - OFFENSE"],
-    ["Total Plays", gd.stats.offense.totalPlays],
-    ["First Downs", gd.stats.offense.firstDowns],
-    ["Touchdowns", gd.stats.offense.touchdowns],
-    ["Pass Attempts", gd.stats.offense.passAttempts],
-    ["Completions", gd.stats.offense.completions],
-    ["Passing Yards", gd.stats.offense.passingYards],
-    ["Rush Attempts", gd.stats.offense.rushAttempts],
-    ["Rushing Yards", gd.stats.offense.rushingYards],
-    [
-      "Total Yards",
-      gd.stats.offense.passingYards + gd.stats.offense.rushingYards,
-    ],
-    [],
-    ["TEAM STATS - DEFENSE"],
-    ["Flag Pulls", gd.stats.defense.flagPulls],
-    ["Interceptions", gd.stats.defense.interceptions],
-    ["Forced Punts", gd.stats.defense.forcedPunts ?? 0],
-    ["Turnovers on Downs", gd.stats.defense.turnoversOnDowns ?? 0],
+    [`${heading}DEFENSE`],
+    ["Flag Pulls", defense.flagPulls],
+    ["Interceptions", defense.interceptions],
+    ["Player Sacks", sacks.playerSacks],
+    ["Coverage Sacks", sacks.coverageSacks],
+    ["Total Sacks", sacks.playerSacks + sacks.coverageSacks],
+    ["Forced Punts", defense.forcedPunts ?? 0],
+    ["Turnovers on Downs", defense.turnoversOnDowns ?? 0],
   ];
+}
 
-  const passers = playerStats.filter((p) => p.offense.passAttempts > 0);
+function playerStatRows(players: PlayerStats[], heading = "PLAYER STATS - "): Row[] {
+  const rows: Row[] = [];
+
+  const passers = players.filter((p) => p.offense.passAttempts > 0);
   if (passers.length) {
-    rows.push([], ["PLAYER STATS - PASSING"]);
+    rows.push([], [`${heading}PASSING`]);
     rows.push(["Player", "ATT", "CMP", "YDS", "TD", "INT"]);
     passers.forEach((p) =>
       rows.push([
@@ -87,9 +90,9 @@ export function generateGameCSV(
     );
   }
 
-  const rushers = playerStats.filter((p) => p.offense.rushAttempts > 0);
+  const rushers = players.filter((p) => p.offense.rushAttempts > 0);
   if (rushers.length) {
-    rows.push([], ["PLAYER STATS - RUSHING"]);
+    rows.push([], [`${heading}RUSHING`]);
     rows.push(["Player", "ATT", "YDS", "TD"]);
     rushers.forEach((p) =>
       rows.push([
@@ -101,9 +104,9 @@ export function generateGameCSV(
     );
   }
 
-  const receivers = playerStats.filter((p) => p.offense.receptions > 0);
+  const receivers = players.filter((p) => p.offense.receptions > 0);
   if (receivers.length) {
-    rows.push([], ["PLAYER STATS - RECEIVING"]);
+    rows.push([], [`${heading}RECEIVING`]);
     rows.push(["Player", "REC", "YDS", "TD"]);
     receivers.forEach((p) =>
       rows.push([
@@ -115,26 +118,55 @@ export function generateGameCSV(
     );
   }
 
-  const defenders = playerStats.filter(
+  const defenders = players.filter(
     (p) =>
       p.defense.flagPulls > 0 ||
       p.defense.interceptions > 0 ||
       p.defense.tacklesForLoss > 0 ||
-      p.defense.passDeflections > 0,
+      p.defense.passDeflections > 0 ||
+      (p.defense.sacks ?? 0) > 0,
   );
   if (defenders.length) {
-    rows.push([], ["PLAYER STATS - DEFENSE"]);
-    rows.push(["Player", "Tackles", "TFL", "INT", "PD"]);
+    rows.push([], [`${heading}DEFENSE`]);
+    rows.push(["Player", "Tackles", "TFL", "Sacks", "INT", "PD"]);
     defenders.forEach((p) =>
       rows.push([
         playerLabel(p),
         p.defense.flagPulls,
         p.defense.tacklesForLoss,
+        p.defense.sacks ?? 0,
         p.defense.interceptions,
         p.defense.passDeflections,
       ]),
     );
   }
+
+  return rows;
+}
+
+// ---------- Per-game CSV ----------
+
+export function generateGameCSV(
+  game: Pick<Game, "opponent_name" | "game_date" | "game_type"> & {
+    teamName?: string;
+    game_data: GameState;
+  },
+): string {
+  const gd = game.game_data;
+  const teamName = game.teamName ?? gd.teamName ?? "Team";
+  const opponent = game.opponent_name ?? gd.opponentName ?? "Opponent";
+  const players = Object.values(playerStatsWithSacks(gd));
+
+  const rows: Row[] = [
+    ["Flag Football Game Stats"],
+    ["Date", new Date(game.game_date).toLocaleDateString()],
+    ["Game Type", GAME_TYPE_LABELS[game.game_type ?? "regular"]],
+    ["Teams", `${teamName} vs ${opponent}`],
+    ["Final Score", `${gd.score.team} - ${gd.score.opponent}`],
+    [],
+    ...teamStatRows(gd.stats.offense, gd.stats.defense, gameSackStats(gd).team),
+    ...playerStatRows(players),
+  ];
 
   return rowsToCsv(rows);
 }
@@ -174,7 +206,8 @@ function describeResult(p: Play): string {
   if (p.touchdown) parts.push("Touchdown");
   if (p.safety) parts.push("Safety");
   if (p.firstDown && !p.touchdown) parts.push("First down");
-  if (p.flagPull) parts.push("Flag pull");
+  if (p.sack) parts.push("Sack");
+  else if (p.flagPull) parts.push("Flag pull");
   if (p.passDeflection) parts.push("Pass deflection");
   return parts.join("; ");
 }
@@ -264,12 +297,21 @@ export function generatePlayByPlayCSV(
 
 // ---------- Season CSV ----------
 
+/**
+ * Season totals (team and player) for one scope: regular season, postseason,
+ * or full season (both). Scrimmages are never included. Pass the season's
+ * games to list the ones the totals cover.
+ */
 export function generateSeasonCSV(
   teamName: string,
   stats: SeasonStats,
+  opts: { seasonName?: string; scope?: SeasonScope; games?: Game[] } = {},
 ): string {
+  const scope = opts.scope ?? "full";
+  const title = [teamName, opts.seasonName].filter(Boolean).join(" ");
   const rows: Row[] = [
-    [`${teamName} Season Statistics`],
+    [`${title} Season Statistics`],
+    ["Covers", SEASON_SCOPE_LABELS[scope]],
     [
       "Record",
       `${stats.wins}-${stats.losses}${stats.ties > 0 ? `-${stats.ties}` : ""}`,
@@ -277,91 +319,25 @@ export function generateSeasonCSV(
     ["Games Played", stats.gamesPlayed],
     ["Points For", stats.totalPointsFor],
     ["Points Against", stats.totalPointsAgainst],
+    ["Note", "Scrimmages are not included."],
     [],
-    ["TEAM OFFENSE"],
-    ["Total Plays", stats.offense.totalPlays],
-    ["First Downs", stats.offense.firstDowns],
-    ["Touchdowns", stats.offense.touchdowns],
-    ["Pass Attempts", stats.offense.passAttempts],
-    ["Completions", stats.offense.completions],
-    ["Passing Yards", stats.offense.passingYards],
-    ["Rush Attempts", stats.offense.rushAttempts],
-    ["Rushing Yards", stats.offense.rushingYards],
-    [
-      "Total Yards",
-      stats.offense.passingYards + stats.offense.rushingYards,
-    ],
-    [],
-    ["TEAM DEFENSE"],
-    ["Flag Pulls", stats.defense.flagPulls],
-    ["Interceptions", stats.defense.interceptions],
-    ["Forced Punts", stats.defense.forcedPunts],
-    ["Turnovers on Downs", stats.defense.turnoversOnDowns],
+    ...teamStatRows(stats.offense, stats.defense, stats.sacks, "TEAM "),
+    ...playerStatRows(Object.values(stats.playerStats), "SEASON LEADERS - "),
   ];
 
-  const players = Object.values(stats.playerStats);
-
-  const passers = players.filter((p) => p.offense.passAttempts > 0);
-  if (passers.length) {
-    rows.push([], ["SEASON LEADERS - PASSING"]);
-    rows.push(["Player", "ATT", "CMP", "YDS", "TD", "INT"]);
-    passers.forEach((p) =>
+  const games = (opts.games ?? [])
+    .filter((g) => g.status === "completed" && inSeasonScope(g, scope))
+    .sort((a, b) => new Date(a.game_date).getTime() - new Date(b.game_date).getTime());
+  if (games.length) {
+    rows.push([], ["GAMES"]);
+    rows.push(["Date", "Opponent", "Type", "Score", "Result"]);
+    games.forEach((g) =>
       rows.push([
-        playerLabel(p),
-        p.offense.passAttempts,
-        p.offense.completions,
-        p.offense.passingYards,
-        p.offense.touchdowns,
-        p.offense.interceptions,
-      ]),
-    );
-  }
-
-  const rushers = players.filter((p) => p.offense.rushAttempts > 0);
-  if (rushers.length) {
-    rows.push([], ["SEASON LEADERS - RUSHING"]);
-    rows.push(["Player", "ATT", "YDS", "TD"]);
-    rushers.forEach((p) =>
-      rows.push([
-        playerLabel(p),
-        p.offense.rushAttempts,
-        p.offense.rushingYards,
-        p.offense.touchdowns,
-      ]),
-    );
-  }
-
-  const receivers = players.filter((p) => p.offense.receptions > 0);
-  if (receivers.length) {
-    rows.push([], ["SEASON LEADERS - RECEIVING"]);
-    rows.push(["Player", "REC", "YDS", "TD"]);
-    receivers.forEach((p) =>
-      rows.push([
-        playerLabel(p),
-        p.offense.receptions,
-        p.offense.receivingYards,
-        p.offense.touchdowns,
-      ]),
-    );
-  }
-
-  const defenders = players.filter(
-    (p) =>
-      p.defense.flagPulls > 0 ||
-      p.defense.interceptions > 0 ||
-      p.defense.tacklesForLoss > 0 ||
-      p.defense.passDeflections > 0,
-  );
-  if (defenders.length) {
-    rows.push([], ["SEASON LEADERS - DEFENSE"]);
-    rows.push(["Player", "Tackles", "TFL", "INT", "PD"]);
-    defenders.forEach((p) =>
-      rows.push([
-        playerLabel(p),
-        p.defense.flagPulls,
-        p.defense.tacklesForLoss,
-        p.defense.interceptions,
-        p.defense.passDeflections,
+        new Date(g.game_date).toLocaleDateString(),
+        g.opponent_name,
+        GAME_TYPE_LABELS[g.game_type ?? "regular"],
+        `${g.game_data?.score?.team ?? 0} - ${g.game_data?.score?.opponent ?? 0}`,
+        g.result ? g.result.toUpperCase() : "",
       ]),
     );
   }
