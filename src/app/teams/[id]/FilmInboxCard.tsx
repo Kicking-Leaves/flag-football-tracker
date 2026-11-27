@@ -9,7 +9,7 @@ export default function FilmInboxCard({ teamId, inbox }: { teamId: string; inbox
     <section className="mb-6 rounded-2xl bg-white p-5 shadow-xl">
       <h2 className="text-lg font-bold text-gray-800">Film inbox</h2>
       <p className="mt-1 text-sm text-gray-600">
-        After a game, make a folder in{" "}
+        After a game, open this team&apos;s folder in{" "}
         <a
           href={`https://drive.google.com/drive/folders/${inbox.folderId}`}
           target="_blank"
@@ -17,9 +17,10 @@ export default function FilmInboxCard({ teamId, inbox }: { teamId: string; inbox
           className="font-semibold text-blue-700 underline"
         >
           {inbox.folderName ?? "the film inbox"}
-        </a>{" "}
-        named like <code className="rounded bg-gray-100 px-1">{inbox.code}_12-2-26_monroe_1</code> and drop the camera
-        files in it. RouteRunnr checks every 20 minutes and adds them to the matching game.
+        </a>
+        , make a folder named like <code className="rounded bg-gray-100 px-1">12-2-26_monroe_1</code> (date, opponent,
+        game number that day) and drop the camera files in it. RouteRunnr checks every 20 minutes and adds them to the
+        matching game.
       </p>
       {inbox.lastError && <p className="mt-2 text-sm text-red-700">{inbox.lastError}</p>}
 

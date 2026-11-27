@@ -149,26 +149,52 @@ export function parseFolderDate(text) {
 }
 
 /**
- * Parses a game folder name: <code>_<date>_<opponent>[_<n>].
- * The opponent may itself contain underscores ("mount_si"). Returns
- * { code, date, opponent, game } or { error } with a reason a coach can act on.
+ * Parses a game folder name: [<code>_]<date>_<opponent>[_<n>].
+ * Inside a team folder (teamCode given) the code is optional; at the top of the
+ * inbox it's required. The opponent may contain underscores ("mount_si").
+ * Returns { code, date, opponent, game } or { error } with a reason a coach can act on.
  */
-export function parseGameFolderName(name) {
+export function parseGameFolderName(name, { teamCode } = {}) {
   const parts = String(name ?? "").trim().split(/_+/).filter(Boolean);
-  const example = "Use team_date_opponent_#, e.g. varsity_12-2-26_monroe_1.";
-  if (parts.length < 3) return { error: `Name doesn't follow the pattern. ${example}` };
-  const code = squash(parts[0]);
-  const date = parseFolderDate(parts[1]);
-  if (!date) return { error: `"${parts[1]}" isn't a date like 12-2-26. ${example}` };
-  let rest = parts.slice(2);
+  const example = teamCode
+    ? "Use date_opponent_#, e.g. 12-2-26_monroe_1."
+    : "Put game folders in the team's folder, named like 12-2-26_monroe_1.";
+  let code = teamCode ?? null;
+  // A leading team code is allowed (and checked) inside a team folder.
+  if (parts.length && !parseFolderDate(parts[0])) {
+    const given = squash(parts[0]);
+    if (teamCode && given !== teamCode) {
+      return { error: `This folder is in the ${teamCode} folder but starts with "${parts[0]}". ${example}` };
+    }
+    code = given;
+    parts.shift();
+  }
+  if (!code || parts.length < 2) return { error: `Name doesn't follow the pattern. ${example}` };
+  const date = parseFolderDate(parts[0]);
+  if (!date) return { error: `"${parts[0]}" isn't a date like 12-2-26. ${example}` };
+  let rest = parts.slice(1);
   let game = 1;
   if (rest.length > 1 && /^\d{1,2}$/.test(rest.at(-1))) {
     game = Number(rest.at(-1));
     rest = rest.slice(0, -1);
   }
   const opponent = rest.join(" ").trim();
-  if (!code || !squash(opponent) || game < 1) return { error: `Name doesn't follow the pattern. ${example}` };
+  if (!squash(opponent) || game < 1) return { error: `Name doesn't follow the pattern. ${example}` };
   return { code, date, opponent, game };
+}
+
+/**
+ * Which linked team a top-level inbox folder belongs to, if it's a team folder:
+ * its name is the team's code or name, or ends with the code ("Woodinville JV").
+ */
+export function teamForFolder(folderName, teams) {
+  const name = squash(folderName);
+  if (!name) return null;
+  return (
+    teams.find((t) => name === t.code || name === squash(t.name)) ??
+    teams.find((t) => t.code.length >= 2 && name.endsWith(t.code) && !parseFolderDate(folderName)) ??
+    null
+  );
 }
 
 const SCHOOL_WORDS = /(highschool|high|school|hs|academy|prep)$/;

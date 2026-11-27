@@ -29,6 +29,7 @@ import {
   matchGame,
   md5Matches,
   parseGameFolderName,
+  teamForFolder,
   objectPaths,
   probeDetails,
   progressFromLine,
@@ -330,17 +331,20 @@ async function checkWatch(watch) {
 const FOLDER_MIME = "application/vnd.google-apps.folder";
 const WATCH_DAYS = 7;
 
-/** Matches one game folder in an inbox; creates the game's watch when it matches. */
-async function matchInboxFolder(inbox, teams, folder, seen) {
+/**
+ * Matches one game folder in an inbox; creates the game's watch when it matches.
+ * `inTeam` is set when the folder sits inside a team folder.
+ */
+async function matchInboxFolder(inbox, teams, folder, seen, inTeam = null) {
   if (seen?.status === "matched") return; // already watching (or watched) this game folder
 
-  const parsed = parseGameFolderName(folder.name);
+  const parsed = parseGameFolderName(folder.name, { teamCode: inTeam?.code });
   let result;
-  let teamId = null;
+  let teamId = inTeam?.team_id ?? null;
   if (parsed.error) {
     result = { error: parsed.error };
   } else {
-    const team = teams.find((t) => t.code === parsed.code);
+    const team = inTeam ?? teams.find((t) => t.code === parsed.code);
     if (!team) {
       const codes = teams.map((t) => t.code).join(", ");
       result = { error: `"${parsed.code}" isn't a team in this inbox. Use one of: ${codes}.` };
@@ -388,7 +392,7 @@ async function matchInboxFolder(inbox, teams, folder, seen) {
 async function runInboxes() {
   const { data: inboxes, error } = await supabase
     .from("rr_film_inboxes")
-    .select("id, folder_id, rr_film_inbox_teams(team_id, code)")
+    .select("id, folder_id, rr_film_inbox_teams(team_id, code, rr_teams(name))")
     .eq("active", true);
   if (error) throw new Error(error.message);
 
@@ -402,9 +406,27 @@ async function runInboxes() {
         .eq("inbox_id", inbox.id);
       if (seenError) throw new Error(seenError.message);
       const seenById = new Map(seen.map((r) => [r.folder_id, r]));
+      const teams = inbox.rr_film_inbox_teams.map((t) => ({ team_id: t.team_id, code: t.code, name: t.rr_teams?.name ?? "" }));
       for (const folder of folders) {
         try {
-          await matchInboxFolder(inbox, inbox.rr_film_inbox_teams, folder, seenById.get(folder.id));
+          const team = teamForFolder(folder.name, teams);
+          if (!team) {
+            // A game folder at the top of the inbox (needs its team code).
+            await matchInboxFolder(inbox, teams, folder, seenById.get(folder.id));
+            continue;
+          }
+          // A team folder: its game folders sit one level down.
+          if (seenById.has(folder.id)) {
+            await supabase.from("rr_film_inbox_folders").delete().eq("folder_id", folder.id);
+          }
+          const games = (await listFolder(folder.id)).filter((f) => f.mimeType === FOLDER_MIME);
+          for (const game of games) {
+            try {
+              await matchInboxFolder(inbox, teams, game, seenById.get(game.id), team);
+            } catch (err) {
+              console.error(`Inbox folder ${folder.name}/${game.name}:`, err);
+            }
+          }
         } catch (err) {
           console.error(`Inbox folder ${folder.name}:`, err);
         }

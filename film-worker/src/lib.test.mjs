@@ -116,7 +116,7 @@ describe("watcher", () => {
 
 });
 
-import { localGameDate, matchGame, opponentMatches, parseFolderDate, parseGameFolderName } from "./lib.mjs";
+import { localGameDate, matchGame, opponentMatches, parseFolderDate, parseGameFolderName, teamForFolder } from "./lib.mjs";
 
 describe("inbox folder names", () => {
   it("reads dates in the usual US and ISO shapes", () => {
@@ -137,6 +137,29 @@ describe("inbox folder names", () => {
   it("explains names that don't fit", () => {
     expect(parseGameFolderName("monroe film").error).toMatch(/pattern/);
     expect(parseGameFolderName("varsity_dec2_monroe").error).toMatch(/isn't a date/);
+  });
+
+  it("inside a team folder, the team code is optional but must match if given", () => {
+    expect(parseGameFolderName("12-2-26_monroe_1", { teamCode: "varsity" })).toEqual({ code: "varsity", date: "2026-12-02", opponent: "monroe", game: 1 });
+    expect(parseGameFolderName("varsity_12-2-26_monroe", { teamCode: "varsity" })).toMatchObject({ code: "varsity", opponent: "monroe" });
+    expect(parseGameFolderName("jv_12-2-26_monroe", { teamCode: "varsity" }).error).toMatch(/in the varsity folder/);
+    expect(parseGameFolderName("12-2-26", { teamCode: "varsity" }).error).toMatch(/pattern/);
+  });
+
+  it("at the top of the inbox, a game folder needs its team code", () => {
+    expect(parseGameFolderName("12-2-26_monroe_1").error).toMatch(/team's folder/);
+  });
+
+  it("recognizes team folders by code or name", () => {
+    const teams = [
+      { team_id: "v", code: "varsity", name: "Woodinville Varsity" },
+      { team_id: "j", code: "jv", name: "Woodinville JV" },
+    ];
+    expect(teamForFolder("Woodinville Varsity", teams)?.team_id).toBe("v");
+    expect(teamForFolder("Woodinville JV", teams)?.team_id).toBe("j");
+    expect(teamForFolder("JV", teams)?.team_id).toBe("j");
+    expect(teamForFolder("varsity_12-2-26_monroe_1", teams)).toBeNull();
+    expect(teamForFolder("Scouting", teams)).toBeNull();
   });
 
   it("matches opponents loosely", () => {
