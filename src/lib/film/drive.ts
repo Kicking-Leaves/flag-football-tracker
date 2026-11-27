@@ -27,13 +27,6 @@ export function isVideoFile(file: { name: string; mimeType?: string | null }): b
   return /\.(mp4|mov|m4v)$/i.test(file.name);
 }
 
-/** A starting camera name from the file name, e.g. "MEVO_Sideline_0042.MP4" → "MEVO Sideline 0042". */
-export function suggestCameraName(fileName: string, index: number): string {
-  const base = fileName.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
-  const name = base || `Camera ${index + 1}`;
-  return name.length > 60 ? name.slice(0, 60).trim() : name;
-}
-
 export interface DriveVideo {
   id: string;
   name: string;

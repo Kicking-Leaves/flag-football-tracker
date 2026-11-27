@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { suggestCameraName, type DriveVideo } from "@/lib/film/drive";
+import type { DriveVideo } from "@/lib/film/drive";
 import {
   FILM_STATUS_LABELS,
   formatBytes,
@@ -188,7 +188,7 @@ function WatchRow({
         <span
           className={`rounded-full px-2 py-0.5 text-xs font-bold ${on ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"}`}
         >
-          {on ? "Watching" : "Stopped"}
+          {on ? (w.source === "inbox" ? "Watching (from film inbox)" : "Watching") : "Stopped"}
         </span>
       </div>
       <p className="mt-1 text-xs text-gray-500">
@@ -350,7 +350,7 @@ function DriveImport({
       setFolderName(res.folderName);
       setPicks(
         Object.fromEntries(
-          res.files.map((f, i) => [f.id, { selected: !f.imported, name: suggestCameraName(f.name, cameraCount + i) }]),
+          res.files.map((f, i) => [f.id, { selected: !f.imported, name: `Camera ${cameraCount + i + 1}` }]),
         ),
       );
     } catch (err) {
@@ -415,7 +415,7 @@ function DriveImport({
         </li>
         <li>
           Paste the folder&apos;s link, then either pick videos now with <strong>Find videos</strong>, or tap{" "}
-          <strong>Watch folder</strong> to import every video automatically as it finishes uploading (checked every 5
+          <strong>Watch folder</strong> to import every video automatically as it finishes uploading (checked every 20
           minutes for 7 days). You can set up the watch before the game.
         </li>
       </ol>

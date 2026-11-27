@@ -2,8 +2,9 @@
 //
 //   node src/main.mjs import <cameraId>   copy from Google Drive, then process
 //   node src/main.mjs process <cameraId>  read details, make the 720p copy and thumbnail
-//   node src/main.mjs watch               import new videos from watched Drive folders
-//                                         (run every 5 minutes by Cloud Scheduler)
+//   node src/main.mjs watch               match new game folders in team film inboxes,
+//                                         then import new videos from watched folders
+//                                         (run every 20 minutes by Cloud Scheduler)
 //
 // Env:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  status updates (bypasses RLS)
@@ -25,13 +26,14 @@ import { GoogleAuth } from "google-auth-library";
 import { createClient } from "@supabase/supabase-js";
 import {
   filesToImport,
+  matchGame,
   md5Matches,
+  parseGameFolderName,
   objectPaths,
   probeDetails,
   progressFromLine,
   proxyArgs,
   shortError,
-  suggestCameraName,
   thumbArgs,
 } from "./lib.mjs";
 
@@ -298,7 +300,7 @@ async function checkWatch(watch) {
     .insert(
       picks.map((f, i) => ({
         game_id: watch.game_id,
-        name: suggestCameraName(f.name, cams.length + i),
+        name: `Camera ${cams.length + i + 1}`,
         position: cams.length + i,
         source: "drive",
         drive_file_id: f.id,
@@ -321,6 +323,98 @@ async function checkWatch(watch) {
     }
   }
   return started;
+}
+
+// ---------- Team film inboxes ----------
+
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+const WATCH_DAYS = 7;
+
+/** Matches one game folder in an inbox; creates the game's watch when it matches. */
+async function matchInboxFolder(inbox, teams, folder, seen) {
+  if (seen?.status === "matched") return; // already watching (or watched) this game folder
+
+  const parsed = parseGameFolderName(folder.name);
+  let result;
+  let teamId = null;
+  if (parsed.error) {
+    result = { error: parsed.error };
+  } else {
+    const team = teams.find((t) => t.code === parsed.code);
+    if (!team) {
+      const codes = teams.map((t) => t.code).join(", ");
+      result = { error: `"${parsed.code}" isn't a team in this inbox. Use one of: ${codes}.` };
+    } else {
+      teamId = team.team_id;
+      const { data: games, error } = await supabase
+        .from("rr_games")
+        .select("id, game_date, opponent_name, created_at")
+        .eq("team_id", team.team_id);
+      if (error) throw new Error(error.message);
+      result = matchGame(parsed, games);
+    }
+  }
+
+  const row = {
+    inbox_id: inbox.id,
+    folder_id: folder.id,
+    folder_name: folder.name,
+    team_id: teamId,
+    game_id: result.gameId ?? null,
+    status: result.gameId ? "matched" : "unmatched",
+    reason: result.error ?? null,
+    updated_at: new Date().toISOString(),
+  };
+  const { error: saveError } = await supabase.from("rr_film_inbox_folders").upsert(row, { onConflict: "folder_id" });
+  if (saveError) throw new Error(saveError.message);
+
+  if (result.gameId) {
+    const { error: watchError } = await supabase.from("rr_film_watches").upsert(
+      {
+        game_id: result.gameId,
+        folder_id: folder.id,
+        folder_name: folder.name,
+        source: "inbox",
+        active: true,
+        expires_at: new Date(Date.now() + WATCH_DAYS * 86_400_000).toISOString(),
+      },
+      { onConflict: "game_id,folder_id", ignoreDuplicates: true },
+    );
+    if (watchError) throw new Error(watchError.message);
+    console.log(`Inbox ${inbox.id}: ${folder.name} matched game ${result.gameId}`);
+  }
+}
+
+async function runInboxes() {
+  const { data: inboxes, error } = await supabase
+    .from("rr_film_inboxes")
+    .select("id, folder_id, rr_film_inbox_teams(team_id, code)")
+    .eq("active", true);
+  if (error) throw new Error(error.message);
+
+  for (const inbox of inboxes) {
+    const fields = { last_checked_at: new Date().toISOString(), last_error: null };
+    try {
+      const folders = (await listFolder(inbox.folder_id)).filter((f) => f.mimeType === FOLDER_MIME);
+      const { data: seen, error: seenError } = await supabase
+        .from("rr_film_inbox_folders")
+        .select("folder_id, status")
+        .eq("inbox_id", inbox.id);
+      if (seenError) throw new Error(seenError.message);
+      const seenById = new Map(seen.map((r) => [r.folder_id, r]));
+      for (const folder of folders) {
+        try {
+          await matchInboxFolder(inbox, inbox.rr_film_inbox_teams, folder, seenById.get(folder.id));
+        } catch (err) {
+          console.error(`Inbox folder ${folder.name}:`, err);
+        }
+      }
+    } catch (err) {
+      console.error(`Inbox ${inbox.id}:`, err);
+      fields.last_error = shortError(err);
+    }
+    await supabase.from("rr_film_inboxes").update(fields).eq("id", inbox.id);
+  }
 }
 
 async function runWatches() {
@@ -353,6 +447,8 @@ async function runWatches() {
 async function main() {
   const [command, cameraId] = process.argv.slice(2);
   if (command === "watch") {
+    // Inboxes first, so a newly matched game folder is checked in the same run.
+    await runInboxes();
     await runWatches();
     return;
   }

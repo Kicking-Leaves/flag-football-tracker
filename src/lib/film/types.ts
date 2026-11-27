@@ -38,6 +38,7 @@ export interface FilmWatch {
   last_checked_at: string | null;
   last_error: string | null;
   imported_count: number;
+  source: "manual" | "inbox";
   created_at: string;
 }
 

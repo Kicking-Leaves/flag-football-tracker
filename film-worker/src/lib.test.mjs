@@ -91,7 +91,7 @@ describe("md5Matches", () => {
   });
 });
 
-import { filesToImport, readyToImport, suggestCameraName, SETTLE_MS } from "./lib.mjs";
+import { filesToImport, readyToImport, SETTLE_MS } from "./lib.mjs";
 
 describe("watcher", () => {
   const now = Date.parse("2026-11-28T20:00:00Z");
@@ -114,7 +114,60 @@ describe("watcher", () => {
     expect(filesToImport(files, new Set(), 8, 8, now)).toEqual([]);
   });
 
-  it("names cameras from files", () => {
-    expect(suggestCameraName("MEVO_Endzone.mp4", 0)).toBe("MEVO Endzone");
+});
+
+import { localGameDate, matchGame, opponentMatches, parseFolderDate, parseGameFolderName } from "./lib.mjs";
+
+describe("inbox folder names", () => {
+  it("reads dates in the usual US and ISO shapes", () => {
+    expect(parseFolderDate("12-2-26")).toBe("2026-12-02");
+    expect(parseFolderDate("12-02-2026")).toBe("2026-12-02");
+    expect(parseFolderDate("2026-12-02")).toBe("2026-12-02");
+    expect(parseFolderDate("12.2.26")).toBe("2026-12-02");
+    expect(parseFolderDate("2-30-26")).toBeNull();
+    expect(parseFolderDate("12-2")).toBeNull();
+  });
+
+  it("parses team, date, opponent and game number", () => {
+    expect(parseGameFolderName("varsity_12-2-26_monroe_1")).toEqual({ code: "varsity", date: "2026-12-02", opponent: "monroe", game: 1 });
+    expect(parseGameFolderName("JV_12-2-26_Monroe")).toEqual({ code: "jv", date: "2026-12-02", opponent: "Monroe", game: 1 });
+    expect(parseGameFolderName("varsity_12-2-26_mount_si_2")).toMatchObject({ opponent: "mount si", game: 2 });
+  });
+
+  it("explains names that don't fit", () => {
+    expect(parseGameFolderName("monroe film").error).toMatch(/pattern/);
+    expect(parseGameFolderName("varsity_dec2_monroe").error).toMatch(/isn't a date/);
+  });
+
+  it("matches opponents loosely", () => {
+    expect(opponentMatches("monroe", "Monroe HS")).toBe(true);
+    expect(opponentMatches("monroe", "Monroe High School")).toBe(true);
+    expect(opponentMatches("mount si", "Mount Si")).toBe(true);
+    expect(opponentMatches("monroe", "Mountlake Terrace")).toBe(false);
+  });
+
+  it("uses the Pacific calendar date of a game", () => {
+    expect(localGameDate("2026-12-03T03:30:00Z")).toBe("2026-12-02"); // 7:30pm Dec 2 in Seattle
+  });
+
+  describe("matchGame", () => {
+    const games = [
+      { id: "g1", game_date: "2026-12-02T18:00:00Z", opponent_name: "Monroe", created_at: "2026-12-02T17:00:00Z" },
+      { id: "g2", game_date: "2026-12-02T21:00:00Z", opponent_name: "Monroe", created_at: "2026-12-02T20:00:00Z" },
+      { id: "g3", game_date: "2026-12-02T23:00:00Z", opponent_name: "Redmond", created_at: "2026-12-02T22:00:00Z" },
+    ];
+    const parsed = (game = 1, opponent = "monroe", date = "2026-12-02") => ({ code: "varsity", date, opponent, game });
+
+    it("picks the nth game against that opponent that day", () => {
+      expect(matchGame(parsed(1), games)).toEqual({ gameId: "g1" });
+      expect(matchGame(parsed(2), games)).toEqual({ gameId: "g2" });
+      expect(matchGame(parsed(1, "redmond"), games)).toEqual({ gameId: "g3" });
+    });
+
+    it("says why nothing matched", () => {
+      expect(matchGame(parsed(1, "monroe", "2025-12-02"), games).error).toMatch(/No game logged on 12\/2\/25/);
+      expect(matchGame(parsed(1, "bothell"), games).error).toMatch(/Games that day: Monroe, Redmond/);
+      expect(matchGame(parsed(3), games).error).toMatch(/Only 2 games/);
+    });
   });
 });

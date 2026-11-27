@@ -66,7 +66,7 @@ export async function deleteFilmCameraRow(supabase: SupabaseClient, id: string):
 }
 
 const WATCH_COLUMNS =
-  "id, game_id, folder_id, folder_name, active, expires_at, last_checked_at, last_error, imported_count, created_at";
+  "id, game_id, folder_id, folder_name, active, expires_at, last_checked_at, last_error, imported_count, source, created_at";
 
 export async function getFilmWatches(supabase: SupabaseClient, gameId: string): Promise<FilmWatch[]> {
   const { data, error } = await supabase
@@ -117,4 +117,55 @@ export async function setWatchActive(supabase: SupabaseClient, id: string, activ
     .maybeSingle();
   if (error) throw error;
   return (data as FilmWatch) ?? null;
+}
+
+export interface TeamFilmInbox {
+  inboxId: string;
+  folderName: string | null;
+  folderId: string;
+  code: string;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  /** Recent game folders for this team, plus any whose team code didn't match. */
+  folders: {
+    id: string;
+    folder_name: string;
+    status: "matched" | "unmatched";
+    reason: string | null;
+    game_id: string | null;
+    team_id: string | null;
+    updated_at: string;
+  }[];
+}
+
+/** The film inbox linked to a team, if any (Woodinville teams for now). */
+export async function getTeamFilmInbox(supabase: SupabaseClient, teamId: string): Promise<TeamFilmInbox | null> {
+  const { data: link, error } = await supabase
+    .from("rr_film_inbox_teams")
+    .select("code, rr_film_inboxes(id, folder_id, folder_name, last_checked_at, last_error)")
+    .eq("team_id", teamId)
+    .maybeSingle();
+  if (error) throw error;
+  const inbox = (link as unknown as {
+    code: string;
+    rr_film_inboxes: { id: string; folder_id: string; folder_name: string | null; last_checked_at: string | null; last_error: string | null } | null;
+  } | null);
+  if (!inbox?.rr_film_inboxes) return null;
+  const { data: folders, error: foldersError } = await supabase
+    .from("rr_film_inbox_folders")
+    .select("id, folder_name, status, reason, game_id, team_id, updated_at")
+    .eq("inbox_id", inbox.rr_film_inboxes.id)
+    .or(`team_id.eq.${teamId},team_id.is.null`)
+    .order("updated_at", { ascending: false })
+    .limit(20);
+  if (foldersError) throw foldersError;
+  return {
+    inboxId: inbox.rr_film_inboxes.id,
+    folderId: inbox.rr_film_inboxes.folder_id,
+    folderName: inbox.rr_film_inboxes.folder_name,
+    code: inbox.code,
+    lastCheckedAt: inbox.rr_film_inboxes.last_checked_at,
+    lastError: inbox.rr_film_inboxes.last_error,
+    folders: (folders ?? []) as TeamFilmInbox["folders"],
+  };
 }

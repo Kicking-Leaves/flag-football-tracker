@@ -78,17 +78,17 @@ gc run jobs deploy "$WATCHER" --region "$REGION" --image "$IMAGE" --service-acco
   --cpu 1 --memory 512Mi --task-timeout 10m --max-retries 0 --args watch \
   --set-env-vars "SUPABASE_URL=$SUPABASE_URL,FILM_BUCKET=$BUCKET,FILM_GCP_REGION=$REGION,FILM_JOB_NAME=$JOB" \
   --set-secrets "SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest"
-# Scheduler runs the watcher as the film account; the app can also run it on demand.
+# Scheduler runs the watcher every 20 minutes as the film account; the app can also run it on demand.
 gc run jobs add-iam-policy-binding "$WATCHER" --region "$REGION" --member "serviceAccount:$SA" \
   --role roles/run.invoker >/dev/null
 
-echo "== Schedule: every 5 minutes"
+echo "== Schedule: every 20 minutes"
 SCHEDULE_URI="https://run.googleapis.com/v2/projects/${PROJECT_ID}/locations/${REGION}/jobs/${WATCHER}:run"
 if gc scheduler jobs describe film-watch --location "$REGION" >/dev/null 2>&1; then
-  gc scheduler jobs update http film-watch --location "$REGION" --schedule "*/5 * * * *" \
+  gc scheduler jobs update http film-watch --location "$REGION" --schedule "*/20 * * * *" \
     --uri "$SCHEDULE_URI" --http-method POST --oauth-service-account-email "$SA"
 else
-  gc scheduler jobs create http film-watch --location "$REGION" --schedule "*/5 * * * *" \
+  gc scheduler jobs create http film-watch --location "$REGION" --schedule "*/20 * * * *" \
     --time-zone "America/Los_Angeles" --uri "$SCHEDULE_URI" --http-method POST \
     --oauth-service-account-email "$SA"
 fi
