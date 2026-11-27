@@ -2,6 +2,7 @@
 // and only overrides what it needs.
 
 import type { GameState, PlayerStats, RosterEntry } from "../types";
+import { makeEmptyPlayerStats } from "../game-engine";
 
 export const PLAYER_QB: RosterEntry = { id: "p1", name: "Alice", number: "1" };
 export const PLAYER_WR: RosterEntry = { id: "p2", name: "Bob", number: "12" };
@@ -10,30 +11,6 @@ export const PLAYER_DB: RosterEntry = { id: "p4", name: "Dave", number: "34" };
 
 export const DEFAULT_ROSTER: RosterEntry[] = [PLAYER_QB, PLAYER_WR, PLAYER_RB, PLAYER_DB];
 
-function makeEmptyPlayerStats(name: string, number: string): PlayerStats {
-  return {
-    name,
-    number,
-    offense: {
-      passAttempts: 0,
-      completions: 0,
-      incompletions: 0,
-      passingYards: 0,
-      interceptions: 0,
-      rushAttempts: 0,
-      rushingYards: 0,
-      receptions: 0,
-      receivingYards: 0,
-      touchdowns: 0,
-    },
-    defense: {
-      flagPulls: 0,
-      interceptions: 0,
-      tacklesForLoss: 0,
-      passDeflections: 0,
-    },
-  };
-}
 
 /** Returns a valid GameState with sensible defaults. Override only what the test needs. */
 export function makeGameState(overrides: Partial<GameState> = {}): GameState {

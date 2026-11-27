@@ -69,6 +69,10 @@ export default async function SeasonDetailPage({
   }));
   const completedGames = games.filter((g) => g.status === "completed");
   const inProgressGames = games.filter((g) => g.status === "in_progress");
+  // Soonest first.
+  const scheduledGames = games
+    .filter((g) => g.status === "scheduled")
+    .sort((a, b) => new Date(a.game_date).getTime() - new Date(b.game_date).getTime());
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-blue-50 via-green-50 to-blue-50">
@@ -197,10 +201,40 @@ export default async function SeasonDetailPage({
           </section>
         )}
 
+        {/* Scheduled games */}
+        {scheduledGames.length > 0 && (
+          <section className="mb-6">
+            <h2 className="mb-4 text-xl font-bold text-gray-800">Upcoming</h2>
+            <div className="space-y-3">
+              {scheduledGames.map((g) => (
+                <div key={g.id} className="rounded-xl bg-white p-5 shadow-lg">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-gray-500">
+                        {new Date(g.game_date).toLocaleDateString()}
+                      </p>
+                      <p className="text-lg font-bold text-gray-800">vs {g.opponent_name}</p>
+                      <GameTypeTag game={g} />
+                    </div>
+                    {canScore && (
+                      <Link
+                        href={`/teams/${teamId}/games/${g.id}`}
+                        className="whitespace-nowrap rounded-xl bg-green-600 px-4 py-3 text-sm font-bold text-white shadow"
+                      >
+                        Start scoring
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {/* Schedule / history */}
         <section>
           <h2 className="mb-4 text-xl font-bold text-gray-800">Schedule</h2>
-          {completedGames.length === 0 && inProgressGames.length === 0 ? (
+          {completedGames.length === 0 && inProgressGames.length === 0 && scheduledGames.length === 0 ? (
             <div className="rounded-xl bg-white p-8 text-center shadow">
               <p className="text-gray-500">No games yet this season.</p>
               {canCreate && (

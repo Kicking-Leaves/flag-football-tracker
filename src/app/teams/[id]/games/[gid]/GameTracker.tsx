@@ -14,6 +14,8 @@ import InterceptionDialog from "@/components/game/InterceptionDialog";
 import OvertimeSetupDialog from "@/components/game/OvertimeSetupDialog";
 import OvertimeConversionEntry from "@/components/game/OvertimeConversionEntry";
 import InGameStatsPanel from "@/components/game/InGameStatsPanel";
+import PlayByPlay from "@/components/game/PlayByPlay";
+import { isMarker, lastScoringCheckEntry } from "@/lib/game-engine";
 import type { GameState, Possession } from "@/lib/types";
 
 interface GameTrackerProps {
@@ -54,10 +56,11 @@ export default function GameTracker({
 
   // Player-side touchdown detection. After a TD, the engine keeps the field
   // state put; we surface a "Point After" mode to the user.
-  const lastPlay = state.plays[state.plays.length - 1];
+  const lastPlay = lastScoringCheckEntry(state.plays);
   const lastWasTD =
     lastPlay &&
-    lastPlay.touchdown &&
+    !isMarker(lastPlay) &&
+    (lastPlay.touchdown || lastPlay.interceptionReturnTD) &&
     !lastPlay.isPointAfter &&
     !lastPlay.isOvertimeConversion;
   const needsPointAfter =
@@ -70,11 +73,14 @@ export default function GameTracker({
   const [showUndoConfirm, setShowUndoConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showStatsPanel, setShowStatsPanel] = useState(false);
+  const [showPlays, setShowPlays] = useState(false);
 
   // Active mode resolves to pointAfter if a TD just happened.
   const activeMode: Mode = needsPointAfter ? "pointAfter" : mode;
-  const possessionAtTD: "team" | "opponent" =
-    lastPlay?.possession ?? state.possession;
+  // After a pick-six the intercepting team tries the point after.
+  const possessionAtTD: "team" | "opponent" = lastPlay?.interceptionReturnTD
+    ? state.possession
+    : (lastPlay?.possession ?? state.possession);
 
   function handleEndGame() {
     if (state.half === 1) {
@@ -175,6 +181,13 @@ export default function GameTracker({
             </Link>
             <button
               type="button"
+              onClick={() => setShowPlays(true)}
+              className="mt-3 block w-full rounded-xl bg-gray-100 py-3 font-bold text-gray-700"
+            >
+              Play-by-play (view or edit)
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 if (confirm("Reopen this game to correct plays? End the game again when you're done.")) {
                   game.reopenGame();
@@ -247,6 +260,7 @@ export default function GameTracker({
             )}
             {activeMode === "penalty" && (
               <PenaltyEntry
+                lineOfScrimmage={state.lineOfScrimmage}
                 onSubmit={(data) => {
                   game.recordPenalty(data);
                   setMode("normal");
@@ -421,7 +435,7 @@ export default function GameTracker({
 
       {/* Bottom nav (always present during active gameplay) */}
       {!state.completed && (
-        <div className="fixed bottom-0 left-0 right-0 grid grid-cols-4 gap-3 border-t-2 bg-white p-4">
+        <div className="fixed bottom-0 left-0 right-0 grid grid-cols-5 gap-2 border-t-2 bg-white p-4">
           <button
             type="button"
             onClick={() => setShowUndoConfirm(true)}
@@ -429,6 +443,13 @@ export default function GameTracker({
             className="rounded-xl bg-orange-600 py-3 font-bold text-white disabled:opacity-50"
           >
             Undo
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPlays(true)}
+            className="rounded-xl bg-blue-600 py-3 font-bold text-white"
+          >
+            Plays
           </button>
           <button
             type="button"
@@ -451,6 +472,31 @@ export default function GameTracker({
           >
             {state.half === 1 ? "End Half" : "End Game"}
           </button>
+        </div>
+      )}
+
+      {/* Play-by-play: view and edit; edits rebuild the score and stats. */}
+      {showPlays && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-gray-50">
+          <div className="mx-auto max-w-2xl p-4 pb-24">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-2xl font-bold">Play-by-play</h2>
+              <button
+                type="button"
+                onClick={() => setShowPlays(false)}
+                className="rounded-xl bg-gray-700 px-4 py-2 font-bold text-white"
+              >
+                Done
+              </button>
+            </div>
+            <PlayByPlay
+              state={state}
+              teamName={teamName}
+              opponentName={opponentName}
+              canEdit
+              onChange={(entries) => game.replaceEntries(entries)}
+            />
+          </div>
         </div>
       )}
 

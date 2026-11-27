@@ -6,6 +6,7 @@
 
 import type {
   DefenseStats,
+  FumbleStats,
   Game,
   GameState,
   OffenseStats,
@@ -17,7 +18,15 @@ import type {
   SeasonStats,
 } from "./types";
 import { GAME_TYPE_LABELS, SEASON_SCOPE_LABELS, inSeasonScope } from "./types";
-import { gameSackStats, playerStatsWithSacks } from "./sacks";
+import {
+  gameFumbleStats,
+  gameSackStats,
+  isCoverageSack,
+  isPlayerSack,
+  playerStatsWithDerived,
+} from "./derived-stats";
+import { penaltyLabel } from "./penalties";
+import { isMarker } from "./game-engine";
 
 type Row = (string | number)[];
 
@@ -43,6 +52,7 @@ function teamStatRows(
   offense: OffenseStats,
   defense: DefenseStats,
   sacks: SackStats,
+  fumbles: FumbleStats,
   heading = "TEAM STATS - ",
 ): Row[] {
   return [
@@ -59,6 +69,8 @@ function teamStatRows(
     ["Interceptions Thrown", offense.interceptions ?? 0],
     ["Sacked (Player Sacks Allowed)", sacks.sackedAllowed],
     ["Coverage Sacks Allowed", sacks.coverageSacksAllowed],
+    ["Fumbles", fumbles.fumbles],
+    ["Fumbles Lost", fumbles.fumblesLost],
     [],
     [`${heading}DEFENSE`],
     ["Flag Pulls", defense.flagPulls],
@@ -66,6 +78,7 @@ function teamStatRows(
     ["Player Sacks", sacks.playerSacks],
     ["Coverage Sacks", sacks.coverageSacks],
     ["Total Sacks", sacks.playerSacks + sacks.coverageSacks],
+    ["Fumble Recoveries", fumbles.recoveries],
     ["Forced Punts", defense.forcedPunts ?? 0],
     ["Turnovers on Downs", defense.turnoversOnDowns ?? 0],
   ];
@@ -124,11 +137,12 @@ function playerStatRows(players: PlayerStats[], heading = "PLAYER STATS - "): Ro
       p.defense.interceptions > 0 ||
       p.defense.tacklesForLoss > 0 ||
       p.defense.passDeflections > 0 ||
-      (p.defense.sacks ?? 0) > 0,
+      (p.defense.sacks ?? 0) > 0 ||
+      (p.defense.fumbleRecoveries ?? 0) > 0,
   );
   if (defenders.length) {
     rows.push([], [`${heading}DEFENSE`]);
-    rows.push(["Player", "Tackles", "TFL", "Sacks", "INT", "PD"]);
+    rows.push(["Player", "Tackles", "TFL", "Sacks", "INT", "PD", "FR"]);
     defenders.forEach((p) =>
       rows.push([
         playerLabel(p),
@@ -137,6 +151,7 @@ function playerStatRows(players: PlayerStats[], heading = "PLAYER STATS - "): Ro
         p.defense.sacks ?? 0,
         p.defense.interceptions,
         p.defense.passDeflections,
+        p.defense.fumbleRecoveries ?? 0,
       ]),
     );
   }
@@ -155,7 +170,7 @@ export function generateGameCSV(
   const gd = game.game_data;
   const teamName = game.teamName ?? gd.teamName ?? "Team";
   const opponent = game.opponent_name ?? gd.opponentName ?? "Opponent";
-  const players = Object.values(playerStatsWithSacks(gd));
+  const players = Object.values(playerStatsWithDerived(gd));
 
   const rows: Row[] = [
     ["Flag Football Game Stats"],
@@ -164,7 +179,7 @@ export function generateGameCSV(
     ["Teams", `${teamName} vs ${opponent}`],
     ["Final Score", `${gd.score.team} - ${gd.score.opponent}`],
     [],
-    ...teamStatRows(gd.stats.offense, gd.stats.defense, gameSackStats(gd).team),
+    ...teamStatRows(gd.stats.offense, gd.stats.defense, gameSackStats(gd).team, gameFumbleStats(gd).team),
     ...playerStatRows(players),
   ];
 
@@ -173,41 +188,63 @@ export function generateGameCSV(
 
 // ---------- Play-by-play CSV ----------
 
-function describePlayType(p: Play): string {
+export function describePlayType(p: Play): string {
   if (p.isOvertimeConversion) return `OT ${p.attempt ?? ""}-pt try`.trim();
   if (p.isPointAfter) return p.attempt === 1 ? "PAT (automatic 1)" : `${p.attempt}-pt try`;
   switch (p.playType) {
     case "pass":
-      return "Pass";
+      return isCoverageSack(p) ? "Coverage sack" : isPlayerSack(p) ? "Pass (sack)" : "Pass";
     case "run":
       return "Run";
     case "punt":
       return "Punt";
     case "coverage_sack":
       return "Coverage sack";
-    case "penalty":
-      return "Penalty";
+    case "penalty": {
+      const name = penaltyLabel(p);
+      return name ? `Penalty: ${name}` : "Penalty";
+    }
+    case "half_end":
+      return "End of 1st half";
+    case "overtime_start":
+      return "Overtime";
+    case "score_adjustment":
+      return "Score change";
     default:
       return p.playType;
   }
 }
 
-function describeResult(p: Play): string {
+export function describeResult(
+  p: Play,
+  names: { team: string; opponent: string } = { team: "Team", opponent: "Opponent" },
+): string {
+  const side = (s?: Possession) => (s === "team" ? names.team : s === "opponent" ? names.opponent : "");
   if (p.isPointAfter || p.isOvertimeConversion) {
     return p.success ? "Good" : "No good";
   }
+  if (p.playType === "half_end") return `${side(p.possession)} receives`;
+  if (p.playType === "overtime_start") return `${side(p.possession)} goes first`;
+  if (p.playType === "score_adjustment") {
+    const pts = p.points ?? 0;
+    return `${side(p.possession)} ${pts >= 0 ? "+" : ""}${pts}`;
+  }
   if (p.playType === "penalty") {
     const on = p.onOffense ? "on offense" : "on defense";
-    return p.lossOfDown ? `${on}, loss of down` : on;
+    const yds = `${Math.abs(p.yards ?? 0)} yds`;
+    if (p.automaticFirstDown) return `${yds} ${on}, automatic 1st down`;
+    return p.lossOfDown ? `${yds} ${on}, loss of down` : `${yds} ${on}`;
   }
+  if (isCoverageSack(p)) return "7-second count, down counts";
   const parts: string[] = [];
-  if (p.playType === "pass") parts.push(p.complete ? "Complete" : "Incomplete");
+  if (p.playType === "pass" && !p.sack) parts.push(p.complete ? "Complete" : "Incomplete");
+  if (isPlayerSack(p)) parts.push("Sack");
   if (p.interception) parts.push(p.interceptionReturnTD ? "Interception (returned for TD)" : "Interception");
+  if (p.fumble) parts.push(p.fumble === "lost" ? "Fumble, caught by defense" : "Fumble, dead at the spot");
   if (p.touchdown) parts.push("Touchdown");
   if (p.safety) parts.push("Safety");
   if (p.firstDown && !p.touchdown) parts.push("First down");
-  if (p.sack) parts.push("Sack");
-  else if (p.flagPull) parts.push("Flag pull");
+  if (p.flagPull && !isPlayerSack(p)) parts.push("Flag pull");
   if (p.passDeflection) parts.push("Pass deflection");
   return parts.join("; ");
 }
@@ -242,6 +279,9 @@ export function generatePlayByPlayCSV(
       if (side && pts) parts.push(`${nameOf(side)} +${pts}`);
     };
     if (p.isPointAfter || p.isOvertimeConversion) add(p.possession, p.points ?? 0);
+    if (p.playType === "score_adjustment" && p.points) {
+      parts.push(`${nameOf(p.possession)} ${p.points > 0 ? "+" : ""}${p.points}`);
+    }
     if (p.touchdown) add(p.possession, 6);
     if (p.safety) add(other(p.possession), 2);
     if (p.interceptionReturnTD) add(other(p.possession), 6);
@@ -270,20 +310,20 @@ export function generatePlayByPlayCSV(
   ];
 
   gd.plays.forEach((p, i) => {
-    const isTry = p.isPointAfter || p.isOvertimeConversion;
+    const isTry = p.isPointAfter || p.isOvertimeConversion || isMarker(p);
     rows.push([
       i + 1,
       p.recordedAt ?? "",
       // "2026-11-21T19:04:32.120-08:00" → "19:04:32"
       p.recordedAt ? p.recordedAt.slice(11, 19) : "",
       p.half === "OT" ? "OT" : p.half ? String(p.half) : "",
-      nameOf(p.possession),
+      isMarker(p) ? "" : nameOf(p.possession),
       isTry ? "" : p.down || "",
       isTry ? "" : p.yardsToGo ?? "",
       p.lineOfScrimmage ?? "",
       describePlayType(p),
       isTry ? "" : p.yards,
-      describeResult(p),
+      describeResult(p, { team: teamName, opponent }),
       scoring(p),
       who(p.passer),
       who(p.receiver),
@@ -321,7 +361,7 @@ export function generateSeasonCSV(
     ["Points Against", stats.totalPointsAgainst],
     ["Note", "Scrimmages are not included."],
     [],
-    ...teamStatRows(stats.offense, stats.defense, stats.sacks, "TEAM "),
+    ...teamStatRows(stats.offense, stats.defense, stats.sacks, stats.fumbles, "TEAM "),
     ...playerStatRows(Object.values(stats.playerStats), "SEASON LEADERS - "),
   ];
 

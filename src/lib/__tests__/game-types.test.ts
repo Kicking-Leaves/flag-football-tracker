@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { computePlayerSeasonStats, computeSeasonStats } from "../db";
 import { addPlay } from "../game-engine";
-import { gameSackStats, playerStatsWithSacks } from "../sacks";
+import { gameSackStats, playerStatsWithDerived } from "../derived-stats";
 import { generateGameCSV, generatePlayByPlayCSV, generateSeasonCSV } from "../csv";
 import { countsForSeason, inSeasonScope, type Game, type GameType } from "../types";
 import { makeGame, makeGameState, PLAYER_DB, PLAYER_QB } from "./helpers";
@@ -95,7 +95,7 @@ describe("sacks", () => {
   });
 
   it("credits the defender and still counts the flag pull and TFL", () => {
-    const ps = playerStatsWithSacks(sackGameState())[PLAYER_DB.id];
+    const ps = playerStatsWithDerived(sackGameState())[PLAYER_DB.id];
     expect(ps.defense.sacks).toBe(1);
     expect(ps.defense.flagPulls).toBe(1);
     expect(ps.defense.tacklesForLoss).toBe(1);

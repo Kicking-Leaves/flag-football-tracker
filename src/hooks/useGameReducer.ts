@@ -9,6 +9,7 @@ import * as engine from "@/lib/game-engine";
 import type {
   GameState,
   OTConversionData,
+  Play,
   PenaltyData,
   PlayData,
   PointAfterData,
@@ -34,6 +35,7 @@ export type GameAction =
       payload: { team: Possession; amount: number };
     }
   | { type: "UNDO_LAST_PLAY" }
+  | { type: "REPLACE_ENTRIES"; payload: Play[] }
   | { type: "LOAD_GAME"; payload: GameState };
 
 function reducer(state: GameState, action: GameAction): GameState {
@@ -70,6 +72,8 @@ function reducer(state: GameState, action: GameAction): GameState {
       );
     case "UNDO_LAST_PLAY":
       return engine.undoLastPlay(state);
+    case "REPLACE_ENTRIES":
+      return engine.rebuildGame(state, action.payload);
     case "LOAD_GAME":
       return action.payload;
     default:
@@ -161,6 +165,11 @@ export function useGameReducer(
     () => dispatch({ type: "UNDO_LAST_PLAY" }),
     [],
   );
+  /** Play-by-play edits: rebuild score and stats from the edited log. */
+  const replaceEntries = useCallback(
+    (entries: Play[]) => dispatch({ type: "REPLACE_ENTRIES", payload: entries }),
+    [],
+  );
   const loadGame = useCallback(
     (s: GameState) => dispatch({ type: "LOAD_GAME", payload: s }),
     [],
@@ -181,6 +190,7 @@ export function useGameReducer(
     reopenGame,
     adjustScore,
     undoLastPlay,
+    replaceEntries,
     loadGame,
   };
 }

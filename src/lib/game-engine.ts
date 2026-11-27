@@ -10,6 +10,7 @@
 
 import type {
   GameState,
+  MarkerType,
   Play,
   PlayData,
   PlayerStats,
@@ -57,6 +58,7 @@ export function makeEmptyPlayerStats(name: string, number: string): PlayerStats 
       tacklesForLoss: 0,
       passDeflections: 0,
       sacks: 0,
+      fumbleRecoveries: 0,
     },
   };
 }
@@ -76,6 +78,7 @@ export function makeInitialGameState(
     teamName,
     opponentName,
     roster,
+    firstPossession,
     score: { team: 0, opponent: 0 },
     possession: firstPossession,
     half: 1,
@@ -179,14 +182,87 @@ function flipPossession(p: Possession): Possession {
 
 // ---------- Plays ----------
 
+/** True for a pass that ended in a coverage sack (or the legacy coverage_sack type). */
+export function isCoverageSack(p: Pick<Play, "playType" | "sack" | "sackType">): boolean {
+  return p.playType === "coverage_sack" || (p.playType === "pass" && Boolean(p.sack) && p.sackType === "coverage");
+}
+
+/** True for a pass where the passer's flag was pulled before the throw. */
+export function isPlayerSack(p: Pick<Play, "playType" | "sack" | "sackType">): boolean {
+  return p.playType === "pass" && Boolean(p.sack) && p.sackType !== "coverage";
+}
+
+/** Clears outcome flags that can't go together, so the log stays consistent. */
+function normalizePlayData(input: PlayData): PlayData {
+  const d: PlayData = { ...input };
+  if (d.playType === "coverage_sack") {
+    d.playType = "pass";
+    d.sack = true;
+    d.sackType = "coverage";
+  }
+  if (d.playType !== "pass") {
+    delete d.sack;
+    delete d.sackType;
+    delete d.complete;
+    d.passer = null;
+    d.receiver = null;
+    d.passDeflection = false;
+  }
+  if (d.playType !== "run") d.rusher = null;
+  if (d.playType === "run") d.interception = false;
+  if (d.playType === "punt") {
+    d.isPunt = true;
+    d.yards = 0;
+    delete d.fumble;
+  }
+  if (d.playType === "pass" && d.sack) {
+    d.sackType = d.sackType ?? "player";
+    d.complete = false;
+    d.receiver = null;
+    d.touchdown = false;
+    d.interception = false;
+    d.passDeflection = false;
+    delete d.fumble;
+    if (d.sackType === "coverage") {
+      // 7-second count: ball back to the previous spot, down counts.
+      d.yards = 0;
+      d.firstDown = false;
+      d.flagPull = false;
+      d.defender = null;
+    }
+  } else {
+    delete d.sack;
+    delete d.sackType;
+  }
+  // An incomplete pass is dead when it lands; there's nothing to fumble.
+  if (d.playType === "pass" && !d.complete) delete d.fumble;
+  if (d.interception) delete d.fumble;
+  if (d.fumble === "lost") {
+    d.touchdown = false;
+    d.firstDown = false;
+    d.safety = false;
+  }
+  if (!d.fumble) delete d.fumble;
+  return d;
+}
+
 /**
  * Record a regular play (pass, run, or punt). Mirrors addPlay in app.jsx,
  * including the sticky first-down target behavior on negative yardage.
+ *
+ * Sacks are an outcome of a pass: a player sack (flag pulled before the
+ * throw, ball spotted at the yards given) or a coverage sack (7-second count,
+ * ball back to the previous spot). Neither counts as a pass attempt.
+ * A fumble is dead at the spot, or "lost" when the defense catches it before
+ * it touches the ground and takes over there.
  */
-export function addPlay(state: GameState, playData: PlayData): GameState {
+export function addPlay(state: GameState, input: PlayData): GameState {
   const g = clone(state);
+  const playData = normalizePlayData(input);
+  const coverageSack = isCoverageSack(playData);
+  const playerSack = isPlayerSack(playData);
 
-  // Snapshot before mutating so the play row records pre-play state for undo.
+  // Snapshot before mutating so the play row records pre-play state.
   const stateBeforePlay = {
     down: g.down,
     yardsToGo: g.yardsToGo,
@@ -204,7 +280,9 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
 
   // --- Stat tracking ---
   if (playData.possession === "team") {
-    if (playData.playType === "pass") {
+    if (playData.playType === "pass" && (coverageSack || playerSack)) {
+      g.stats.offense.totalPlays++;
+    } else if (playData.playType === "pass") {
       g.stats.offense.passAttempts++;
       g.stats.offense.totalPlays++;
       if (playData.complete) {
@@ -239,9 +317,6 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
         r.offense.rushingYards += playData.yards;
         if (playData.touchdown) r.offense.touchdowns++;
       }
-    } else if (playData.playType === "coverage_sack") {
-      // WIAA 7-second count expired: no yards, no player stats, down counts.
-      g.stats.offense.totalPlays++;
     }
     if (playData.firstDown) g.stats.offense.firstDowns++;
     if (playData.touchdown) {
@@ -291,6 +366,18 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
     return g;
   }
 
+  if (playData.fumble === "lost") {
+    // The defense takes over where the ball was fumbled. Field positions are
+    // measured from each offense's own goal line, so flip the spot.
+    const spot = Math.max(FIELD_MIN, Math.min(FIELD_MAX, g.lineOfScrimmage + playData.yards));
+    g.possession = flipPossession(g.possession);
+    g.down = 1;
+    g.lineOfScrimmage = Math.max(FIELD_MIN, Math.min(FIELD_MAX, FIELD_MAX - spot));
+    g.firstDownTarget = getFirstDownTargetLine(g.lineOfScrimmage, null);
+    g.yardsToGo = calculateYardsToFirstDown(g.lineOfScrimmage, g.firstDownTarget);
+    return g;
+  }
+
   if (playData.isPunt || playData.playType === "punt") {
     if (g.possession !== "team") {
       g.stats.defense.forcedPunts = (g.stats.defense.forcedPunts || 0) + 1;
@@ -314,11 +401,9 @@ export function addPlay(state: GameState, playData: PlayData): GameState {
     g.down = 1;
     g.firstDownTarget = getFirstDownTargetLine(newLOS, null);
     g.yardsToGo = calculateYardsToFirstDown(newLOS, g.firstDownTarget);
-    if (!playData.firstDown) g.stats.offense.firstDowns++;
-    // Ensure the stored play record reflects that a first down was earned so
-    // undoLastPlay can correctly reverse the stat. Without this, auto-detected
-    // first downs (crossedTarget) leak past undo because lastPlay.firstDown
-    // is falsy.
+    // Only our offense's first downs are team stats.
+    if (!playData.firstDown && playData.possession === "team") g.stats.offense.firstDowns++;
+    // Record that a first down was earned so the log and stats agree.
     play.firstDown = true;
   } else {
     g.down++;
@@ -396,7 +481,12 @@ export function recordPenalty(state: GameState, data: PenaltyData): GameState {
   g.firstDownTarget = preservedTarget;
   g.yardsToGo = calculateYardsToFirstDown(newLOS, preservedTarget);
 
-  if (data.lossOfDown) {
+  if (data.automaticFirstDown || newLOS >= preservedTarget) {
+    // Automatic first down, or the yardage reached the line to gain.
+    g.down = 1;
+    g.firstDownTarget = getFirstDownTargetLine(newLOS, null);
+    g.yardsToGo = calculateYardsToFirstDown(newLOS, g.firstDownTarget);
+  } else if (data.lossOfDown) {
     g.down++;
     if (g.down > 4) {
       g.possession = flipPossession(g.possession);
@@ -415,6 +505,9 @@ export function recordPenalty(state: GameState, data: PenaltyData): GameState {
     yards: penaltyAmount,
     onOffense: data.onOffense,
     lossOfDown: data.lossOfDown,
+    ...(data.automaticFirstDown ? { automaticFirstDown: true } : {}),
+    ...(data.penaltyCode ? { penaltyCode: data.penaltyCode } : {}),
+    ...(data.penaltyName ? { penaltyName: data.penaltyName } : {}),
     down: g.down,
     yardsToGo: g.yardsToGo,
     lineOfScrimmage: g.lineOfScrimmage,
@@ -436,13 +529,14 @@ export function handleInterceptionDetails(
   g.possession = intTeam;
   delete g.interceptionTeam;
 
+  const intPlay = g.plays[g.plays.length - 1];
   if (isTD) {
     if (g.possession === "team") g.score.team += 6;
     else g.score.opponent += 6;
-    const intPlay = g.plays[g.plays.length - 1];
     if (intPlay?.interception) intPlay.interceptionReturnTD = true;
     // Keep possession — UI will prompt for point after.
   } else {
+    if (intPlay?.interception) intPlay.returnSpot = fieldPos;
     g.down = 1;
     g.lineOfScrimmage = Math.max(FIELD_MIN, Math.min(FIELD_MAX, fieldPos));
     g.firstDownTarget = getFirstDownTargetLine(g.lineOfScrimmage, null);
@@ -455,6 +549,7 @@ export function handleInterceptionDetails(
 export function endHalf(state: GameState, nextPossession: Possession): GameState {
   const g = clone(state);
   if (g.half === 1) {
+    pushMarker(g, "half_end", nextPossession);
     g.half = 2;
     g.possession = nextPossession;
     g.down = 1;
@@ -475,6 +570,7 @@ export function startOvertime(state: GameState, firstOffense: Possession): GameS
   g.overtimeFirstOffense = firstOffense;
   g.possession = firstOffense;
   g.awaitingOvertimeConversion = true;
+  pushMarker(g, "overtime_start", firstOffense);
   return g;
 }
 
@@ -552,191 +648,17 @@ export function adjustScore(
   const g = clone(state);
   if (team === "team") g.score.team = Math.max(0, g.score.team + amount);
   else g.score.opponent = Math.max(0, g.score.opponent + amount);
+  pushMarker(g, "score_adjustment", team, { points: amount });
   return g;
 }
 
 /**
- * Undo the last play. Reverses stats AND restores the field state captured
- * in the play's pre-play snapshot.
+ * Undo the last log entry (play, penalty, try, end of half, score change) by
+ * rebuilding the game from the rest of the log.
  */
 export function undoLastPlay(state: GameState): GameState {
-  const g = clone(state);
-  if (!g.plays.length) return g;
-
-  const lastPlay = g.plays[g.plays.length - 1];
-
-  if (lastPlay.playType === "penalty") {
-    g.plays.pop();
-    if (g.plays.length > 0) {
-      const prev = g.plays[g.plays.length - 1];
-      g.down = prev.down;
-      g.yardsToGo = prev.yardsToGo;
-      g.lineOfScrimmage = prev.lineOfScrimmage;
-      if (prev.firstDownTarget) g.firstDownTarget = prev.firstDownTarget;
-    }
-    return g;
-  }
-
-  // Tries (after a TD, or in OT) carry no field snapshot worth restoring: take
-  // the points back and return to the "awaiting try" state for the same team.
-  if (lastPlay.isPointAfter || lastPlay.isOvertimeConversion) {
-    g.plays.pop();
-    const scorer = lastPlay.possession ?? flipPossession(g.possession);
-    const pts = lastPlay.points ?? 0;
-    if (scorer === "team") g.score.team = Math.max(0, g.score.team - pts);
-    else g.score.opponent = Math.max(0, g.score.opponent - pts);
-    g.possession = scorer;
-
-    if (lastPlay.isOvertimeConversion) {
-      g.overtimeRound = lastPlay.overtimeRound ?? g.overtimeRound;
-      g.awaitingOvertimeConversion = true;
-      g.completed = false;
-      delete g.result;
-    } else {
-      // Back to just after the scoring play, which left the field state put.
-      const scoringPlay = g.plays[g.plays.length - 1];
-      if (scoringPlay) {
-        g.down = scoringPlay.down || 1;
-        g.yardsToGo = scoringPlay.yardsToGo;
-        g.lineOfScrimmage = scoringPlay.lineOfScrimmage;
-        if (scoringPlay.firstDownTarget) g.firstDownTarget = scoringPlay.firstDownTarget;
-      }
-    }
-    return g;
-  }
-
-  g.plays.pop();
-
-  // Possession goes back to whoever had the ball for this snap — punts,
-  // safeties, turnovers on downs, and interceptions all flip it.
-  if (lastPlay.possession) g.possession = lastPlay.possession;
-  delete g.awaitingInterceptionInfo;
-  delete g.interceptionTeam;
-
-  // Restore field state from the snapshot stored in the play row.
-  g.down = lastPlay.down || 1;
-  g.yardsToGo = lastPlay.yardsToGo;
-  g.lineOfScrimmage = lastPlay.lineOfScrimmage;
-  g.firstDownTarget =
-    lastPlay.firstDownTarget ||
-    getFirstDownTargetLine(lastPlay.lineOfScrimmage, null);
-
-  // Reverse stat tracking.
-  if (lastPlay.playType === "pass" && lastPlay.possession === "team") {
-    g.stats.offense.passAttempts = Math.max(0, g.stats.offense.passAttempts - 1);
-    g.stats.offense.totalPlays = Math.max(0, g.stats.offense.totalPlays - 1);
-    if (lastPlay.complete) {
-      g.stats.offense.completions = Math.max(0, g.stats.offense.completions - 1);
-      g.stats.offense.passingYards = Math.max(
-        0,
-        g.stats.offense.passingYards - (lastPlay.yards || 0),
-      );
-    }
-    if (lastPlay.passer && g.playerStats[lastPlay.passer]) {
-      const p = g.playerStats[lastPlay.passer];
-      p.offense.passAttempts = Math.max(0, p.offense.passAttempts - 1);
-      if (lastPlay.complete) {
-        p.offense.completions = Math.max(0, p.offense.completions - 1);
-        p.offense.passingYards = Math.max(0, p.offense.passingYards - (lastPlay.yards || 0));
-      } else {
-        p.offense.incompletions = Math.max(0, p.offense.incompletions - 1);
-      }
-      if (lastPlay.interception)
-        p.offense.interceptions = Math.max(0, p.offense.interceptions - 1);
-    }
-    if (lastPlay.complete && lastPlay.receiver && g.playerStats[lastPlay.receiver]) {
-      const r = g.playerStats[lastPlay.receiver];
-      r.offense.receptions = Math.max(0, r.offense.receptions - 1);
-      r.offense.receivingYards = Math.max(0, r.offense.receivingYards - (lastPlay.yards || 0));
-    }
-  } else if (lastPlay.playType === "coverage_sack" && lastPlay.possession === "team") {
-    g.stats.offense.totalPlays = Math.max(0, g.stats.offense.totalPlays - 1);
-  } else if (lastPlay.playType === "run" && lastPlay.possession === "team") {
-    g.stats.offense.rushAttempts = Math.max(0, g.stats.offense.rushAttempts - 1);
-    g.stats.offense.rushingYards = Math.max(0, g.stats.offense.rushingYards - (lastPlay.yards || 0));
-    g.stats.offense.totalPlays = Math.max(0, g.stats.offense.totalPlays - 1);
-    if (lastPlay.rusher && g.playerStats[lastPlay.rusher]) {
-      const r = g.playerStats[lastPlay.rusher];
-      r.offense.rushAttempts = Math.max(0, r.offense.rushAttempts - 1);
-      r.offense.rushingYards = Math.max(0, r.offense.rushingYards - (lastPlay.yards || 0));
-    }
-  }
-
-  if (lastPlay.touchdown) {
-    if (lastPlay.possession === "team") {
-      g.score.team = Math.max(0, g.score.team - 6);
-      g.stats.offense.touchdowns = Math.max(0, g.stats.offense.touchdowns - 1);
-      if (lastPlay.passer && g.playerStats[lastPlay.passer])
-        g.playerStats[lastPlay.passer].offense.touchdowns = Math.max(
-          0,
-          g.playerStats[lastPlay.passer].offense.touchdowns - 1,
-        );
-      if (lastPlay.receiver && g.playerStats[lastPlay.receiver])
-        g.playerStats[lastPlay.receiver].offense.touchdowns = Math.max(
-          0,
-          g.playerStats[lastPlay.receiver].offense.touchdowns - 1,
-        );
-      if (lastPlay.rusher && g.playerStats[lastPlay.rusher])
-        g.playerStats[lastPlay.rusher].offense.touchdowns = Math.max(
-          0,
-          g.playerStats[lastPlay.rusher].offense.touchdowns - 1,
-        );
-    } else {
-      g.score.opponent = Math.max(0, g.score.opponent - 6);
-    }
-  }
-
-  if (lastPlay.safety) {
-    // Safety scores 2 for the defense.
-    if (lastPlay.possession === "team") g.score.opponent = Math.max(0, g.score.opponent - 2);
-    else g.score.team = Math.max(0, g.score.team - 2);
-  }
-
-  if (lastPlay.interceptionReturnTD) {
-    if (lastPlay.possession === "team") g.score.opponent = Math.max(0, g.score.opponent - 6);
-    else g.score.team = Math.max(0, g.score.team - 6);
-  }
-
-  if (lastPlay.possession === "opponent") {
-    if (lastPlay.playType === "punt" || lastPlay.isPunt) {
-      g.stats.defense.forcedPunts = Math.max(0, (g.stats.defense.forcedPunts || 0) - 1);
-    } else if (
-      lastPlay.down === 4 &&
-      !lastPlay.firstDown &&
-      !lastPlay.touchdown &&
-      !lastPlay.interception &&
-      !lastPlay.safety
-    ) {
-      g.stats.defense.turnoversOnDowns = Math.max(
-        0,
-        (g.stats.defense.turnoversOnDowns || 0) - 1,
-      );
-    }
-  }
-
-  if (lastPlay.firstDown && lastPlay.possession === "team") {
-    g.stats.offense.firstDowns = Math.max(0, g.stats.offense.firstDowns - 1);
-  }
-
-  if (lastPlay.flagPull && lastPlay.defender && g.playerStats[lastPlay.defender]) {
-    const d = g.playerStats[lastPlay.defender];
-    d.defense.flagPulls = Math.max(0, d.defense.flagPulls - 1);
-    g.stats.defense.flagPulls = Math.max(0, g.stats.defense.flagPulls - 1);
-    if ((lastPlay.yards || 0) < 0 && d.defense.tacklesForLoss > 0) {
-      d.defense.tacklesForLoss = Math.max(0, d.defense.tacklesForLoss - 1);
-    }
-  }
-  if (lastPlay.interception && lastPlay.defender && g.playerStats[lastPlay.defender]) {
-    const d = g.playerStats[lastPlay.defender];
-    d.defense.interceptions = Math.max(0, d.defense.interceptions - 1);
-    g.stats.defense.interceptions = Math.max(0, g.stats.defense.interceptions - 1);
-  }
-  if (lastPlay.passDeflection && lastPlay.defender && g.playerStats[lastPlay.defender]) {
-    const d = g.playerStats[lastPlay.defender];
-    d.defense.passDeflections = Math.max(0, d.defense.passDeflections - 1);
-  }
-
-  return g;
+  if (!state.plays.length) return clone(state);
+  return rebuildGame(state, state.plays.slice(0, -1), { keepStatus: false });
 }
 
 /**
@@ -770,4 +692,221 @@ export function triggerOvertimeSetup(state: GameState): GameState {
   const g = clone(state);
   g.awaitingOvertimeSetup = true;
   return g;
+}
+
+// ---------- Log markers ----------
+
+const MARKER_TYPES = new Set<Play["playType"]>(["half_end", "overtime_start", "score_adjustment"]);
+
+/** End of half, start of overtime, or a score change: not a snap or a try. */
+export function isMarker(p: Pick<Play, "playType">): boolean {
+  return MARKER_TYPES.has(p.playType);
+}
+
+function pushMarker(
+  g: GameState,
+  type: MarkerType,
+  possession: Possession,
+  extra: Partial<Play> = {},
+): void {
+  g.plays.push({
+    ...recordMeta(g),
+    id: Date.now(),
+    playType: type,
+    possession,
+    yards: 0,
+    down: g.down,
+    yardsToGo: g.yardsToGo,
+    lineOfScrimmage: g.lineOfScrimmage,
+    firstDownTarget: g.firstDownTarget,
+    ...extra,
+  });
+}
+
+/**
+ * The entry that decides whether a try is due: the last one that isn't a
+ * score change (a score change right after a TD shouldn't skip the try).
+ */
+export function lastScoringCheckEntry(plays: Play[]): Play | undefined {
+  for (let i = plays.length - 1; i >= 0; i--) {
+    if (plays[i].playType !== "score_adjustment") return plays[i];
+  }
+  return undefined;
+}
+
+// ---------- Rebuilding from the log ----------
+
+function playDataFrom(e: Play, possession: Possession): PlayData {
+  return {
+    possession,
+    playType: e.playType as PlayData["playType"],
+    yards: e.yards ?? 0,
+    complete: e.complete,
+    firstDown: e.firstDown,
+    touchdown: e.touchdown,
+    interception: e.interception,
+    flagPull: e.flagPull,
+    safety: e.safety,
+    passDeflection: e.passDeflection,
+    sack: e.sack,
+    sackType: e.sackType,
+    fumble: e.fumble,
+    isPunt: e.isPunt,
+    passer: e.passer ?? null,
+    receiver: e.receiver ?? null,
+    rusher: e.rusher ?? null,
+    defender: e.defender ?? null,
+  };
+}
+
+function isSnap(e: Play): boolean {
+  return e.playType === "pass" || e.playType === "run" || e.playType === "punt" || e.playType === "coverage_sack";
+}
+
+/** Keeps the original entry's id and time on whatever the engine just logged. */
+function keepIdentity(g: GameState, e: Play): void {
+  const i = g.plays.length - 1;
+  if (i < 0) return;
+  g.plays[i] = { ...g.plays[i], id: e.id, recordedAt: e.recordedAt };
+  if (!e.recordedAt) delete g.plays[i].recordedAt;
+}
+
+function stripTime(g: GameState): GameState {
+  const last = g.plays[g.plays.length - 1];
+  if (last) delete last.recordedAt;
+  return g;
+}
+
+function applyEntry(g: GameState, e: Play, next: Play | undefined, original: GameState): GameState {
+  let s = g;
+
+  // Older games didn't log the end of the half or the start of overtime:
+  // infer them from the period each entry was recorded in.
+  if (!isMarker(e) && e.half === 2 && s.half === 1) {
+    s = stripTime(endHalf(s, e.possession ?? s.possession));
+  }
+  if (e.isOvertimeConversion && !s.isOvertime) {
+    s = stripTime(startOvertime(s, e.possession ?? s.possession));
+  }
+
+  // The possession logged with each entry is what the scorer saw, so it wins
+  // over the rebuilt state. If they disagree, take the entry's own field spot.
+  if (!isMarker(e) && e.possession && e.possession !== s.possession) {
+    s = clone(s);
+    s.possession = e.possession;
+    delete s.awaitingInterceptionInfo;
+    delete s.interceptionTeam;
+    if (isSnap(e)) {
+      s.down = e.down || 1;
+      s.yardsToGo = e.yardsToGo;
+      s.lineOfScrimmage = e.lineOfScrimmage;
+      s.firstDownTarget = e.firstDownTarget || getFirstDownTargetLine(e.lineOfScrimmage, null);
+    }
+  }
+
+  switch (e.playType) {
+    case "half_end":
+      s = endHalf(s, e.possession ?? "team");
+      break;
+    case "overtime_start":
+      s = startOvertime(s, e.possession ?? "team");
+      break;
+    case "score_adjustment":
+      s = adjustScore(s, e.possession ?? "team", e.points ?? 0);
+      break;
+    case "point_after":
+      s = e.isOvertimeConversion
+        ? handleOvertimeConversion(s, { type: e.attempt ?? 1, success: Boolean(e.success) })
+        : recordPointAfter(s, {
+            type: e.attempt ?? 1,
+            success: Boolean(e.success),
+            playType: e.rusher ? "run" : "pass",
+            passer: e.passer ?? null,
+            receiver: e.receiver ?? null,
+            rusher: e.rusher ?? null,
+          });
+      break;
+    case "penalty":
+      s = recordPenalty(s, {
+        yards: Math.abs(e.yards ?? 0),
+        onOffense: Boolean(e.onOffense),
+        lossOfDown: Boolean(e.lossOfDown),
+        automaticFirstDown: e.automaticFirstDown,
+        penaltyCode: e.penaltyCode,
+        penaltyName: e.penaltyName,
+      });
+      break;
+    default:
+      s = addPlay(s, playDataFrom(e, s.possession));
+      if (s.awaitingInterceptionInfo) {
+        if (e.interceptionReturnTD) {
+          s = handleInterceptionDetails(s, true, 0);
+        } else if (e.returnSpot != null) {
+          s = handleInterceptionDetails(s, false, e.returnSpot);
+        } else if (next) {
+          // Older games didn't store the return spot; the next snap starts there.
+          s = handleInterceptionDetails(s, false, next.lineOfScrimmage ?? 5);
+        } else if (!original.awaitingInterceptionInfo) {
+          s = handleInterceptionDetails(s, false, original.lineOfScrimmage);
+        }
+      }
+  }
+  keepIdentity(s, e);
+  return s;
+}
+
+/**
+ * Rebuilds a game's score, field state and stats by replaying its log. Used
+ * for undo and for play-by-play edits, so every stat stays consistent with
+ * the plays. With keepStatus, a finished game stays finished (its result is
+ * recomputed) and a pending overtime setup stays pending.
+ */
+export function rebuildGame(
+  state: GameState,
+  entries: Play[] = state.plays,
+  { keepStatus = true }: { keepStatus?: boolean } = {},
+): GameState {
+  const first =
+    state.firstPossession ??
+    state.plays.find((e) => !isMarker(e) && e.possession)?.possession ??
+    state.possession;
+  let g = makeInitialGameState(state.roster ?? [], first, state.teamName, state.opponentName);
+  // Players logged in stats but missing from the roster keep their stat line.
+  for (const [id, ps] of Object.entries(state.playerStats ?? {})) {
+    g.playerStats[id] ??= makeEmptyPlayerStats(ps.name, ps.number);
+  }
+  entries.forEach((e, i) => {
+    g = applyEntry(g, e, entries[i + 1], state);
+  });
+  if (keepStatus) {
+    if (state.awaitingOvertimeSetup && !g.isOvertime) g.awaitingOvertimeSetup = true;
+    if (
+      state.completed &&
+      !g.completed &&
+      !g.awaitingOvertimeConversion &&
+      !g.awaitingInterceptionInfo &&
+      !g.awaitingOvertimeSetup
+    ) {
+      g = markGameCompleted(g);
+    }
+  }
+  return g;
+}
+
+/** States after each entry, for showing the score and situation in the play-by-play. */
+export function replayTimeline(state: GameState, entries: Play[] = state.plays): GameState[] {
+  const out: GameState[] = [];
+  const first =
+    state.firstPossession ??
+    state.plays.find((e) => !isMarker(e) && e.possession)?.possession ??
+    state.possession;
+  let g = makeInitialGameState(state.roster ?? [], first, state.teamName, state.opponentName);
+  for (const [id, ps] of Object.entries(state.playerStats ?? {})) {
+    g.playerStats[id] ??= makeEmptyPlayerStats(ps.name, ps.number);
+  }
+  entries.forEach((e, i) => {
+    g = applyEntry(g, e, entries[i + 1], state);
+    out.push(g);
+  });
+  return out;
 }

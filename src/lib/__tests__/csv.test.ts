@@ -68,6 +68,7 @@ function makeSeasonStats(overrides: Partial<SeasonStats> = {}): SeasonStats {
       interceptions: 3,
     },
     sacks: { playerSacks: 0, coverageSacks: 0, sackedAllowed: 0, coverageSacksAllowed: 0 },
+    fumbles: { fumbles: 0, fumblesLost: 0, recoveries: 0 },
     defense: {
       flagPulls: 60,
       interceptions: 5,

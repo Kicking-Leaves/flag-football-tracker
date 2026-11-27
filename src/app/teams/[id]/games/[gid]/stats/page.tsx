@@ -13,7 +13,7 @@ import StatsTable, {
 import CSVExport from "@/components/game/CSVExport";
 import GameTypePicker from "@/components/game/GameTypePicker";
 import { GAME_TYPE_LABELS, countsForSeason } from "@/lib/types";
-import { gameSackStats, playerStatsWithSacks } from "@/lib/sacks";
+import { gameFumbleStats, gameSackStats, playerStatsWithDerived } from "@/lib/derived-stats";
 
 export const dynamic = "force-dynamic";
 
@@ -40,8 +40,9 @@ export default async function GameStatsPage({
   if (game.team_id !== teamId) notFound();
 
   const gd = game.game_data;
-  const playerStats = Object.values(playerStatsWithSacks(gd));
+  const playerStats = Object.values(playerStatsWithDerived(gd));
   const sacks = gameSackStats(gd).team;
+  const fumbles = gameFumbleStats(gd).team;
   const gameType = game.game_type ?? "regular";
 
   const csv = generateGameCSV({
@@ -82,7 +83,9 @@ export default async function GameStatsPage({
             {new Date(game.game_date).toLocaleDateString()} ·{" "}
             {game.status === "completed"
               ? `Result: ${game.result?.toUpperCase()}`
-              : "In progress"}
+              : game.status === "scheduled"
+                ? "Not started"
+                : "In progress"}
           </p>
           {canScore ? (
             <GameTypePicker gameId={gameId} value={gameType} />
@@ -96,12 +99,20 @@ export default async function GameStatsPage({
               Scrimmage stats don&apos;t count toward season stats.
             </p>
           )}
-          <Link
-            href={`/teams/${teamId}/games/${gameId}/film`}
-            className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-bold text-purple-700 shadow"
-          >
-            Film
-          </Link>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              href={`/teams/${teamId}/games/${gameId}/plays`}
+              className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-bold text-purple-700 shadow"
+            >
+              Play-by-play
+            </Link>
+            <Link
+              href={`/teams/${teamId}/games/${gameId}/film`}
+              className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-bold text-purple-700 shadow"
+            >
+              Film
+            </Link>
+          </div>
         </div>
 
         {/* Team offense */}
@@ -134,6 +145,7 @@ export default async function GameStatsPage({
               label="Coverage Sacks Allowed"
               value={sacks.coverageSacksAllowed}
             />
+            <Stat label="Fumbles / Lost" value={`${fumbles.fumbles}/${fumbles.fumblesLost}`} />
           </div>
         </section>
 
@@ -148,6 +160,7 @@ export default async function GameStatsPage({
             />
             <Stat label="Player Sacks" value={sacks.playerSacks} />
             <Stat label="Coverage Sacks" value={sacks.coverageSacks} />
+            <Stat label="Fumble Recoveries" value={fumbles.recoveries} />
             <Stat label="Forced Punts" value={gd.stats.defense.forcedPunts} />
             <Stat
               label="Turnovers on Downs"
@@ -174,7 +187,7 @@ export default async function GameStatsPage({
         />
         <StatsTable
           title="Defense"
-          headers={["Player", "Tackles", "TFL", "Sacks", "INT", "PD"]}
+          headers={["Player", "Tackles", "TFL", "Sacks", "INT", "PD", "FR"]}
           rows={defenseRows(playerStats)}
         />
 
@@ -208,7 +221,11 @@ export default async function GameStatsPage({
               href={`/teams/${teamId}/games/${gameId}`}
               className="rounded-xl bg-gray-700 py-3 text-center font-bold text-white shadow"
             >
-              {game.status === "in_progress" ? "Back to Game" : "Edit Game"}
+              {game.status === "in_progress"
+                ? "Back to Game"
+                : game.status === "scheduled"
+                  ? "Start Scoring"
+                  : "Edit Game"}
             </Link>
           )}
           <Link
