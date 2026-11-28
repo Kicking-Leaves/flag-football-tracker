@@ -241,3 +241,118 @@ export function matchGame(parsed, games, timeZone = "America/Los_Angeles") {
   }
   return { gameId: matches[parsed.game - 1].id };
 }
+
+// ---------- Download cuts ----------
+
+/** Where a download cut is stored. exports/ objects are deleted by the bucket after 30 days. */
+export function exportPath(teamId, gameId, exportId) {
+  return `exports/${teamId}/${gameId}/${exportId}.mp4`;
+}
+
+const secs = (ms) => (ms / 1000).toFixed(3);
+
+/**
+ * ffmpeg arguments for a download cut. Without overlays the video is copied
+ * as-is (fast; starts at the keyframe before startMs). With overlays each
+ * scoreboard image is laid over the frame for its stretch of the cut, which
+ * means re-encoding.
+ *
+ * overlays: [{ file, fromMs, toMs }], times from the start of the cut.
+ */
+export function exportArgs({ input, output, startMs, endMs, overlays = [], reencode = false }) {
+  const head = ["-hide_banner", "-nostdin", "-y", "-ss", secs(startMs), "-i", input];
+  const duration = ["-t", secs(endMs - startMs)];
+  const tail = ["-movflags", "+faststart", "-progress", "pipe:1", "-nostats", output];
+  const audio = ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "160k"];
+  const x264 = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p"];
+
+  if (overlays.length === 0) {
+    if (!reencode) {
+      return [...head, ...duration, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-avoid_negative_ts", "make_zero", ...tail];
+    }
+    return [...head, ...duration, "-map", "0:v:0", ...x264, ...audio, ...tail];
+  }
+
+  const inputs = overlays.flatMap((o) => ["-i", o.file]);
+  const total = endMs - startMs;
+  let prev = "[0:v]";
+  const steps = overlays.map((o, i) => {
+    const out = i === overlays.length - 1 ? "[v]" : `[v${i}]`;
+    const whole = o.fromMs <= 0 && o.toMs >= total;
+    const enable = whole ? "" : `:enable='gte(t,${secs(o.fromMs)})*lt(t,${secs(o.toMs)})'`;
+    const step = `${prev}[${i + 1}:v]overlay=0:0${enable}${out}`;
+    prev = out;
+    return step;
+  });
+  return [...head, ...inputs, ...duration, "-filter_complex", steps.join(";"), "-map", "[v]", ...x264, ...audio, ...tail];
+}
+
+/**
+ * The scoreboard as a satori element tree, laid out like the stream overlay
+ * (src/components/overlay/ScorebugBar.tsx): everything is in em, and the em is
+ * 1.15% of the frame width, so a cut looks like the live stream.
+ */
+export function scorebugTree(bug, { width, height, scale = 1, position = "bottom-left" }) {
+  const em = width * 0.0115 * scale;
+  const px = (n) => Math.round(n * em * 100) / 100;
+  const el = (style, children = []) => ({ type: "div", props: { style: { display: "flex", ...style }, children } });
+  const text = (value, style) => ({ type: "div", props: { style: { display: "flex", ...style }, children: String(value) } });
+
+  const placement =
+    position === "top-left"
+      ? { top: px(3), left: px(3) }
+      : position === "bottom-center"
+        ? { bottom: px(3), left: 0, right: 0, justifyContent: "center" }
+        : { bottom: px(3), left: px(3) };
+
+  const divider = el({ width: Math.max(1, px(0.06)), backgroundColor: "rgba(255,255,255,0.2)" });
+  const team = (name, score, hasBall, accent) =>
+    el({ alignItems: "center", padding: `${px(0.5)}px ${px(1.1)}px` }, [
+      el({ width: px(0.18), alignSelf: "stretch", borderRadius: px(0.1), backgroundColor: accent, marginRight: px(0.7) }),
+      el({ width: px(0.5), height: px(0.5), borderRadius: px(0.25), backgroundColor: "#fbbf24", opacity: hasBall ? 1 : 0, marginRight: px(0.7) }),
+      text(String(name).toUpperCase(), {
+        fontSize: px(1.1), fontWeight: 700, letterSpacing: px(0.04), maxWidth: px(9 * 1.1),
+        overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis",
+      }),
+      text(score, { fontSize: px(1.9), fontWeight: 700, lineHeight: 1, marginLeft: px(0.9) }),
+    ]);
+
+  const bar = el(
+    {
+      alignItems: "stretch",
+      borderRadius: px(0.45),
+      backgroundColor: "rgba(0,0,0,0.8)",
+      color: "white",
+      fontFamily: "Scorebug",
+      overflow: "hidden",
+    },
+    [
+      team(bug.teamName, bug.teamScore, bug.possession === "team", "#22c55e"),
+      divider,
+      team(bug.opponentName, bug.opponentScore, bug.possession === "opponent", "#3b82f6"),
+      divider,
+      el({ flexDirection: "column", justifyContent: "center", padding: `${px(0.5)}px ${px(1.1)}px` }, [
+        text(bug.primaryLabel, {
+          fontSize: px(1.5), fontWeight: 700, lineHeight: 1,
+          ...(bug.final ? { color: "#fbbf24", letterSpacing: px(0.09) } : {}),
+        }),
+        text(bug.periodLabel + (bug.fieldLabel ? ` · ${bug.fieldLabel}` : ""), {
+          marginTop: px(0.35), fontSize: px(0.75), fontWeight: 700, lineHeight: 1,
+          letterSpacing: px(0.06), color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap",
+        }),
+      ]),
+    ],
+  );
+
+  return el({ width, height, position: "relative" }, [el({ position: "absolute", ...placement }, [bar])]);
+}
+
+/** Overlay segments from the database, checked before they reach ffmpeg. */
+export function validSegments(segments, totalMs) {
+  if (!Array.isArray(segments)) return [];
+  return segments
+    .filter((s) => s && Number.isFinite(s.fromMs) && Number.isFinite(s.toMs) && s.toMs > s.fromMs && s.bug)
+    .map((s) => ({ fromMs: Math.max(0, s.fromMs), toMs: Math.min(totalMs, s.toMs), bug: s.bug }))
+    .filter((s) => s.toMs > s.fromMs)
+    .slice(0, 60);
+}

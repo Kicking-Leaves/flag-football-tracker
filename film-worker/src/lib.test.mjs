@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  exportArgs,
+  exportPath,
+  scorebugTree,
+  validSegments,
   md5Matches,
   objectPaths,
   parseFrameRate,
@@ -192,5 +196,81 @@ describe("inbox folder names", () => {
       expect(matchGame(parsed(1, "bothell"), games).error).toMatch(/Games that day: Monroe, Redmond/);
       expect(matchGame(parsed(3), games).error).toMatch(/Only 2 games/);
     });
+  });
+});
+
+describe("download cuts", () => {
+  it("stores cuts under exports/<team>/<game>/", () => {
+    expect(exportPath("t1", "g1", "e1")).toBe("exports/t1/g1/e1.mp4");
+  });
+
+  it("copies without re-encoding when there's no overlay", () => {
+    const args = exportArgs({ input: "in", output: "out.mp4", startMs: 61500, endMs: 85500 });
+    expect(args.slice(args.indexOf("-ss"), args.indexOf("-ss") + 2)).toEqual(["-ss", "61.500"]);
+    expect(args.slice(args.indexOf("-t"), args.indexOf("-t") + 2)).toEqual(["-t", "24.000"]);
+    expect(args).toContain("copy");
+    expect(args).not.toContain("-filter_complex");
+    expect(args.at(-1)).toBe("out.mp4");
+  });
+
+  it("re-encodes on request", () => {
+    const args = exportArgs({ input: "in", output: "o", startMs: 0, endMs: 1000, reencode: true });
+    expect(args).toContain("libx264");
+    expect(args).not.toContain("copy");
+  });
+
+  it("chains one overlay per scoreboard, each only for its stretch", () => {
+    const args = exportArgs({
+      input: "in",
+      output: "o",
+      startMs: 10_000,
+      endMs: 34_000,
+      overlays: [
+        { file: "a.png", fromMs: 0, toMs: 20_000 },
+        { file: "b.png", fromMs: 20_000, toMs: 24_000 },
+      ],
+    });
+    expect(args.filter((a) => a === "-i")).toHaveLength(3);
+    const graph = args[args.indexOf("-filter_complex") + 1];
+    expect(graph).toBe(
+      "[0:v][1:v]overlay=0:0:enable='gte(t,0.000)*lt(t,20.000)'[v0];" +
+        "[v0][2:v]overlay=0:0:enable='gte(t,20.000)*lt(t,24.000)'[v]",
+    );
+    expect(args).toContain("libx264");
+  });
+
+  it("leaves a whole-cut overlay always on", () => {
+    const args = exportArgs({ input: "in", output: "o", startMs: 0, endMs: 5000, overlays: [{ file: "a.png", fromMs: 0, toMs: 5000 }] });
+    expect(args[args.indexOf("-filter_complex") + 1]).toBe("[0:v][1:v]overlay=0:0[v]");
+  });
+
+  it("drops bad overlay segments and clamps the rest", () => {
+    const bug = { teamName: "A" };
+    expect(
+      validSegments(
+        [
+          { fromMs: -5, toMs: 100, bug },
+          { fromMs: 100, toMs: 100, bug },
+          { fromMs: 100, toMs: 9e9, bug },
+          { fromMs: "x", toMs: 5, bug },
+          null,
+        ],
+        5000,
+      ),
+    ).toEqual([
+      { fromMs: 0, toMs: 100, bug },
+      { fromMs: 100, toMs: 5000, bug },
+    ]);
+    expect(validSegments("nope", 10)).toEqual([]);
+  });
+
+  it("sizes the scoreboard from the frame width, like the stream overlay", () => {
+    const bug = { teamName: "Woodinville", teamScore: 7, opponentName: "Redmond", opponentScore: 0, primaryLabel: "1st & 10", periodLabel: "1st Half", fieldLabel: null, possession: "team", final: false };
+    const tree = scorebugTree(bug, { width: 1920, height: 1080 });
+    expect(tree.props.style).toMatchObject({ width: 1920, height: 1080 });
+    const holder = tree.props.children[0];
+    // 3em from the corner, em = 1.15% of 1920px.
+    expect(holder.props.style).toMatchObject({ position: "absolute", left: 66.24, bottom: 66.24 });
+    expect(JSON.stringify(tree)).toContain("WOODINVILLE");
   });
 });

@@ -123,8 +123,8 @@ export async function checkDriveFolder(folderId: string): Promise<{ name: string
   return { name: body.name };
 }
 
-/** Starts the film worker for one camera. */
-export async function startFilmJob(command: "import" | "process", cameraId: string): Promise<void> {
+/** Starts the film worker for one camera, or for one download cut. */
+export async function startFilmJob(command: "import" | "process" | "export", id: string): Promise<void> {
   const { project, region, job } = requireConfig();
   const token = await accessToken(["https://www.googleapis.com/auth/cloud-platform"]);
   const res = await fetch(
@@ -132,7 +132,7 @@ export async function startFilmJob(command: "import" | "process", cameraId: stri
     {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ overrides: { containerOverrides: [{ args: [command, cameraId] }] } }),
+      body: JSON.stringify({ overrides: { containerOverrides: [{ args: [command, id] }] } }),
       cache: "no-store",
     },
   );

@@ -1,5 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { WATCH_DAYS, type FilmCamera, type FilmWatch } from "./types";
+import {
+  CLIP_COLUMNS,
+  EXPORT_COLUMNS,
+  WATCH_DAYS,
+  type FilmCamera,
+  type FilmClip,
+  type FilmExport,
+  type FilmWatch,
+} from "./types";
+import { DEFAULT_POST_ROLL_S, DEFAULT_PRE_ROLL_S } from "./sync";
 
 const CAMERA_COLUMNS =
   "id, game_id, team_id, name, position, source, drive_file_id, source_name, size_bytes, " +
@@ -57,6 +66,11 @@ export async function createDriveCameras(
 
 export async function renameFilmCamera(supabase: SupabaseClient, id: string, name: string): Promise<void> {
   const { error } = await supabase.from("rr_film_cameras").update({ name }).eq("id", id);
+  if (error) throw error;
+}
+
+export async function setFilmCameraNudge(supabase: SupabaseClient, id: string, nudgeMs: number): Promise<void> {
+  const { error } = await supabase.from("rr_film_cameras").update({ nudge_ms: nudgeMs }).eq("id", id);
   if (error) throw error;
 }
 
@@ -167,5 +181,47 @@ export async function getTeamFilmInbox(supabase: SupabaseClient, teamId: string)
     lastCheckedAt: inbox.rr_film_inboxes.last_checked_at,
     lastError: inbox.rr_film_inboxes.last_error,
     folders: (folders ?? []) as TeamFilmInbox["folders"],
+  };
+}
+
+// ---------- Clips and downloads ----------
+
+export async function getFilmClips(supabase: SupabaseClient, gameId: string): Promise<FilmClip[]> {
+  const { data, error } = await supabase
+    .from("rr_film_clips")
+    .select(CLIP_COLUMNS)
+    .eq("game_id", gameId)
+    .order("start_at");
+  if (error) throw error;
+  return (data ?? []) as FilmClip[];
+}
+
+/** Download cuts that haven't expired, newest first. */
+export async function getFilmExports(supabase: SupabaseClient, gameId: string): Promise<FilmExport[]> {
+  const { data, error } = await supabase
+    .from("rr_film_exports")
+    .select(EXPORT_COLUMNS)
+    .eq("game_id", gameId)
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) throw error;
+  return (data ?? []) as FilmExport[];
+}
+
+/** The team's play window: seconds before and after a play's logged time. */
+export async function getTeamPlayWindow(
+  supabase: SupabaseClient,
+  teamId: string,
+): Promise<{ preRollS: number; postRollS: number }> {
+  const { data, error } = await supabase
+    .from("rr_teams")
+    .select("film_pre_roll_s, film_post_roll_s")
+    .eq("id", teamId)
+    .maybeSingle();
+  if (error) throw error;
+  return {
+    preRollS: data?.film_pre_roll_s ?? DEFAULT_PRE_ROLL_S,
+    postRollS: data?.film_post_roll_s ?? DEFAULT_POST_ROLL_S,
   };
 }
