@@ -301,9 +301,11 @@ export function scorebugTree(bug, { width, height, scale = 1, position = "bottom
   const placement =
     position === "top-left"
       ? { top: px(3), left: px(3) }
-      : position === "bottom-center"
-        ? { bottom: px(3), left: 0, right: 0, justifyContent: "center" }
-        : { bottom: px(3), left: px(3) };
+      : position === "top-center"
+        ? { top: px(3), left: 0, right: 0, justifyContent: "center" }
+        : position === "bottom-center"
+          ? { bottom: px(3), left: 0, right: 0, justifyContent: "center" }
+          : { bottom: px(3), left: px(3) };
 
   const divider = el({ width: Math.max(1, px(0.06)), backgroundColor: "rgba(255,255,255,0.2)" });
   const team = (name, score, hasBall, accent) =>

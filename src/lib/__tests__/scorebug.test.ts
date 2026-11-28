@@ -4,6 +4,7 @@ import {
   ordinal,
   periodLabel,
   scorebugFromGameState,
+  overlayScorebug,
   scorebugFromOverlayRow,
   type OverlayScoreboardRow,
 } from "../scorebug";
@@ -58,7 +59,7 @@ describe("scorebugFromGameState", () => {
       periodLabel: "2nd Half",
       primaryLabel: "2nd & 7",
       downLabel: "2nd & 7",
-      fieldLabel: "Ball on 35 → 1st: 42",
+      fieldLabel: "Ball on 35 · 1st down at 42",
       possession: "team",
       final: false,
     });
@@ -104,7 +105,7 @@ describe("scorebugFromGameState", () => {
       "Falcons",
     );
 
-    expect(bug.fieldLabel).toBe("Ball on 44 → 1st: END");
+    expect(bug.fieldLabel).toBe("Ball on 44 · Goal to go");
   });
 });
 
@@ -130,6 +131,13 @@ describe("scorebugFromOverlayRow", () => {
     };
   }
 
+  it("hides the bar while a team link has no game to show", () => {
+    expect(overlayScorebug(makeRow({ has_game: false }))).toBeNull();
+    expect(overlayScorebug(makeRow({ has_game: true }))?.teamScore).toBe(21);
+    // Rows from before has_game existed still show.
+    expect(overlayScorebug(makeRow())?.teamName).toBe("Raiders");
+  });
+
   it("maps a flat RPC row to the same shape as game state", () => {
     expect(scorebugFromOverlayRow(makeRow())).toEqual({
       teamName: "Raiders",
@@ -139,7 +147,7 @@ describe("scorebugFromOverlayRow", () => {
       periodLabel: "2nd Half",
       primaryLabel: "3rd & 4",
       downLabel: "3rd & 4",
-      fieldLabel: "Ball on 28 → 1st: 32",
+      fieldLabel: "Ball on 28 · 1st down at 32",
       possession: "opponent",
       final: false,
     });

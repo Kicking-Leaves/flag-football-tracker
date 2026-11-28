@@ -272,7 +272,7 @@ async function runExport(exportId) {
       const segments = validSegments(job.overlay_segments, totalMs);
       for (const [i, s] of segments.entries()) {
         const file = join(dir, `bug-${i}.png`);
-        await writeFile(file, await renderScorebugPng(s.bug, { width, height }));
+        await writeFile(file, await renderScorebugPng(s.bug, { width, height, position: job.overlay_position }));
         overlays.push({ file, fromMs: s.fromMs, toMs: s.toMs });
       }
       if (overlays.length === 0) throw new Error("Nothing to show on the scoreboard for this stretch.");
@@ -543,7 +543,7 @@ async function selftest() {
     const bug = {
       teamName: "Woodinville", teamScore: 14, opponentName: "Redmond", opponentScore: 7,
       periodLabel: "2nd Half", primaryLabel: "3rd & 6", downLabel: "3rd & 6",
-      fieldLabel: "Ball on 28 → 1st: 33", possession: "team", final: false,
+      fieldLabel: "Ball on 28 · 1st down at 33", possession: "team", final: false,
     };
     const overlays = [];
     for (const [i, b] of [bug, { ...bug, teamScore: 20, primaryLabel: "1st & 10" }].entries()) {

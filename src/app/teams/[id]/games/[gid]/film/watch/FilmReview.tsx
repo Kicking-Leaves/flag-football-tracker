@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import ScorebugBar from "@/components/overlay/ScorebugBar";
+import ScorebugBar, { SCOREBUG_POSITIONS, type ScorebugPosition } from "@/components/overlay/ScorebugBar";
 import { describePlayType, describeResult } from "@/lib/csv";
 import type { GameState } from "@/lib/types";
 import {
@@ -135,6 +135,8 @@ export default function FilmReview(props: Props) {
   const [loop, setLoop] = useState(true);
   const [rate, setRate] = useState(1);
   const [showBug, setShowBug] = useState(false);
+  // One choice for both the on-screen scoreboard and downloads.
+  const [bugPosition, setBugPosition] = useState<ScorebugPosition>("bottom-left");
   const [time, setTime] = useState(0);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -348,6 +350,7 @@ export default function FilmReview(props: Props) {
         body: JSON.stringify({
           cameraId: camera.id,
           overlay: withBug,
+          position: bugPosition,
           ...(item.kind === "play" ? { playId: item.id } : { clipId: item.id }),
         }),
       });
@@ -387,7 +390,7 @@ export default function FilmReview(props: Props) {
             />
             {showBug && bug && (
               <div className="pointer-events-none absolute inset-0 overflow-hidden" style={{ fontSize: "1.15cqw" }}>
-                <ScorebugBar data={bug} position="bottom-left" />
+                <ScorebugBar data={bug} position={bugPosition} />
               </div>
             )}
           </div>
@@ -465,6 +468,18 @@ export default function FilmReview(props: Props) {
             <input type="checkbox" checked={showBug} onChange={(e) => setShowBug(e.target.checked)} />
             Show scoreboard
           </label>
+          <select
+            value={bugPosition}
+            onChange={(e) => setBugPosition(e.target.value as ScorebugPosition)}
+            aria-label="Scoreboard position"
+            className="rounded bg-gray-800 px-2 py-1.5"
+          >
+            {SCOREBUG_POSITIONS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
           <button
             type="button"
             onClick={() => {
@@ -501,6 +516,7 @@ export default function FilmReview(props: Props) {
               <label className="flex items-center gap-1.5">
                 <input type="checkbox" checked={withBug} onChange={(e) => setWithBug(e.target.checked)} />
                 Include scoreboard
+                {withBug ? ` (${SCOREBUG_POSITIONS.find((p) => p.value === bugPosition)?.label.toLowerCase()})` : ""}
               </label>
               <button
                 type="button"

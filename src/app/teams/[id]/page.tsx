@@ -8,11 +8,13 @@ import {
   getSchools,
   getSeasons,
   getTeam,
+  getTeamOverlayToken,
 } from "@/lib/db";
 import type { Season } from "@/lib/types";
 import { ROLE_LABELS, can } from "@/lib/permissions";
 import { getTeamFilmInbox } from "@/lib/film/db";
 import FilmInboxCard from "./FilmInboxCard";
+import OverlayLinkCard from "@/components/overlay/OverlayLinkCard";
 import LeaveTeamButton from "./LeaveTeamButton";
 import NewSeasonForm from "./NewSeasonForm";
 import SeasonRowActions from "./SeasonRowActions";
@@ -39,13 +41,15 @@ export default async function TeamDashboardPage({
   if (!team || !role) notFound();
   const isStaff = can(role, "manageTeam");
 
-  const [seasons, schools, filmInbox] = await Promise.all([
+  const [seasons, schools, filmInbox, overlayToken] = await Promise.all([
     getSeasons(supabase, id),
     isStaff ? getSchools(supabase) : Promise.resolve([]),
     // Admins, coaches and stat keepers see the film inbox (including folders
     // that didn't match a game). Film isn't required for the dashboard, so
     // skip the card if the lookup fails.
     can(role, "scoreGame") ? getTeamFilmInbox(supabase, id).catch(() => null) : Promise.resolve(null),
+    // The stream link is for whoever runs the cameras; scorers hand it out.
+    can(role, "scoreGame") ? getTeamOverlayToken(supabase, id).catch(() => null) : Promise.resolve(null),
   ]);
 
   // For each season compute its record in parallel.
@@ -84,6 +88,8 @@ export default async function TeamDashboardPage({
         </div>
 
         {filmInbox && <FilmInboxCard teamId={id} inbox={filmInbox} />}
+
+        {overlayToken && <OverlayLinkCard teamId={id} teamToken={overlayToken} canReset={isStaff} />}
 
         {isStaff && (
           <SchoolPicker
