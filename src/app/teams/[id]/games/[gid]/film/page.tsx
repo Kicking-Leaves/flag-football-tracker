@@ -47,6 +47,14 @@ export default async function GameFilmPage({
             {team.name} vs {game.opponent_name}
           </p>
           <p className="mt-1 text-sm text-purple-100">{new Date(game.game_date).toLocaleDateString()}</p>
+          {cameras.some((c) => c.status === "ready") && (
+            <Link
+              href={`/teams/${teamId}/games/${gameId}/film/watch`}
+              className="mt-4 inline-block rounded-lg bg-white px-4 py-2 font-semibold text-purple-700 shadow hover:bg-purple-50"
+            >
+              ▶ Watch film
+            </Link>
+          )}
         </div>
 
         <FilmManager

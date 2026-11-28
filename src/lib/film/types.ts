@@ -81,3 +81,55 @@ export function formatBytes(bytes: number | null): string {
   if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
   return `${Math.max(1, Math.round(bytes / 1e3))} KB`;
 }
+
+/** A custom clip, or a coach's adjusted window for a logged play (rr_film_clips). */
+export interface FilmClip {
+  id: string;
+  game_id: string;
+  team_id: string;
+  /** Set when this row adjusts a logged play's window. */
+  play_id: number | null;
+  title: string | null;
+  start_at: string;
+  end_at: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export const CLIP_COLUMNS = "id, game_id, team_id, play_id, title, start_at, end_at, created_by, created_at";
+
+export type FilmExportStatus = "queued" | "processing" | "ready" | "failed";
+
+/** A download cut from one camera (rr_film_exports). */
+export interface FilmExport {
+  id: string;
+  camera_id: string;
+  game_id: string;
+  start_ms: number;
+  end_ms: number;
+  overlay: boolean;
+  file_name: string;
+  status: FilmExportStatus;
+  progress: number;
+  size_bytes: number | null;
+  error: string | null;
+  requested_by: string | null;
+  created_at: string;
+  expires_at: string;
+}
+
+export const EXPORT_COLUMNS =
+  "id, camera_id, game_id, start_ms, end_ms, overlay, file_name, status, progress, size_bytes, error, requested_by, created_at, expires_at";
+
+/** A ready camera with a playable link to its review copy. */
+export interface FilmPlayableCamera {
+  id: string;
+  name: string;
+  thumbUrl: string | null;
+  videoUrl: string;
+  recorded_start_at: string | null;
+  duration_ms: number;
+  nudge_ms: number;
+  width: number | null;
+  height: number | null;
+}

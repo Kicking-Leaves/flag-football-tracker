@@ -1,5 +1,5 @@
 import { gameAccess, requireManage, filmErrorResponse, UUID_RE } from "@/lib/film/access";
-import { deleteFilmCameraRow, getFilmCamera, renameFilmCamera } from "@/lib/film/db";
+import { deleteFilmCameraRow, getFilmCamera, renameFilmCamera, setFilmCameraNudge } from "@/lib/film/db";
 import { deleteFilmObjects, filmConfig, FilmError } from "@/lib/film/server";
 import { createClient } from "@/lib/supabase/server";
 import { isFilmInProgress } from "@/lib/film/types";
@@ -13,12 +13,21 @@ async function loadForManage(id: string) {
   return { camera, access };
 }
 
-/** PATCH { name } → rename a camera. Staff only. */
+/** Two days either way covers any camera clock or time zone mix-up. */
+const MAX_NUDGE_MS = 2 * 86_400_000;
+
+/** PATCH { name } → rename a camera; PATCH { nudgeMs } → save its sync. Staff only. */
 export async function PATCH(request: Request, ctx: RouteContext<"/api/film/cameras/[id]">) {
   try {
     const { id } = await ctx.params;
     const { access } = await loadForManage(id);
-    const body = (await request.json().catch(() => ({}))) as { name?: string };
+    const body = (await request.json().catch(() => ({}))) as { name?: string; nudgeMs?: number };
+    if (body.nudgeMs !== undefined) {
+      const nudge = Math.round(Number(body.nudgeMs));
+      if (!Number.isFinite(nudge) || Math.abs(nudge) > MAX_NUDGE_MS) throw new FilmError("That sync is too far off.");
+      await setFilmCameraNudge(access.supabase, id, nudge);
+      return Response.json({ ok: true, nudgeMs: nudge });
+    }
     const name = String(body.name ?? "").trim().slice(0, 60);
     if (!name) throw new FilmError("Give the camera a name.");
     await renameFilmCamera(access.supabase, id, name);

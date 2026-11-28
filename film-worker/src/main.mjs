@@ -5,6 +5,10 @@
 //   node src/main.mjs watch               match new game folders in team film inboxes,
 //                                         then import new videos from watched folders
 //                                         (run every 20 minutes by Cloud Scheduler)
+//   node src/main.mjs export <exportId>   cut a download from a camera's original,
+//                                         optionally with the scoreboard burned in
+//   node src/main.mjs selftest            make a test video and cut it every way
+//                                         (checks ffmpeg and the scoreboard render)
 //
 // Env:
 //   SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY  status updates (bypasses RLS)
@@ -15,7 +19,7 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
@@ -25,6 +29,8 @@ import { Storage } from "@google-cloud/storage";
 import { GoogleAuth } from "google-auth-library";
 import { createClient } from "@supabase/supabase-js";
 import {
+  exportArgs,
+  exportPath,
   filesToImport,
   matchGame,
   md5Matches,
@@ -36,7 +42,9 @@ import {
   proxyArgs,
   shortError,
   thumbArgs,
+  validSegments,
 } from "./lib.mjs";
+import { renderScorebugPng } from "./render.mjs";
 
 const env = (name) => {
   const value = process.env[name];
@@ -233,6 +241,62 @@ async function processCamera(camera) {
       bucket.file(paths.proxy).createWriteStream({ resumable: true, contentType: "video/mp4" }),
     );
     await update(camera.id, { proxy_path: paths.proxy, status: "ready", progress: 100, error: null });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------- Download cuts ----------
+
+async function updateExport(id, fields) {
+  const { error } = await supabase.from("rr_film_exports").update(fields).eq("id", id);
+  if (error) console.error(`Export update failed for ${id}: ${error.message}`);
+}
+
+async function runExport(exportId) {
+  const { data: job, error } = await supabase.from("rr_film_exports").select("*").eq("id", exportId).single();
+  if (error) throw new Error(`Export ${exportId}: ${error.message}`);
+  if (job.status === "ready") return;
+  const camera = await loadCamera(job.camera_id);
+  if (!camera.original_path) throw new Error("This camera's original file is missing.");
+  await updateExport(exportId, { status: "processing", progress: 0, error: null, job_execution: process.env.CLOUD_RUN_EXECUTION ?? null });
+
+  const input = await signedReadUrl(camera.original_path);
+  const totalMs = job.end_ms - job.start_ms;
+  const dir = await mkdtemp(join(tmpdir(), "export-"));
+  try {
+    const overlays = [];
+    if (job.overlay) {
+      const width = camera.width || 1920;
+      const height = camera.height || 1080;
+      const segments = validSegments(job.overlay_segments, totalMs);
+      for (const [i, s] of segments.entries()) {
+        const file = join(dir, `bug-${i}.png`);
+        await writeFile(file, await renderScorebugPng(s.bug, { width, height }));
+        overlays.push({ file, fromMs: s.fromMs, toMs: s.toMs });
+      }
+      if (overlays.length === 0) throw new Error("Nothing to show on the scoreboard for this stretch.");
+    }
+
+    const output = join(dir, "cut.mp4");
+    const report = throttle((pct) => updateExport(exportId, { progress: pct }), 5_000);
+    const onLine = (line) => {
+      const pct = progressFromLine(line, totalMs);
+      if (pct !== null) report(pct);
+    };
+    try {
+      await run("ffmpeg", exportArgs({ input, output, startMs: job.start_ms, endMs: job.end_ms, overlays }), { onLine });
+    } catch (err) {
+      // A straight copy can fail on odd source files; re-encoding always works.
+      if (overlays.length > 0) throw err;
+      console.warn(`Copy cut failed, re-encoding: ${shortError(err)}`);
+      await run("ffmpeg", exportArgs({ input, output, startMs: job.start_ms, endMs: job.end_ms, reencode: true }), { onLine });
+    }
+
+    const { size } = await stat(output);
+    const path = exportPath(job.team_id, job.game_id, exportId);
+    await bucket.upload(output, { destination: path, contentType: "video/mp4" });
+    await updateExport(exportId, { status: "ready", progress: 100, path, size_bytes: size, error: null });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -466,16 +530,74 @@ async function runWatches() {
   }
 }
 
+async function selftest() {
+  const dir = await mkdtemp(join(tmpdir(), "selftest-"));
+  try {
+    const src = join(dir, "src.mp4");
+    await run("ffmpeg", [
+      "-hide_banner", "-nostdin", "-y",
+      "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:duration=12",
+      "-f", "lavfi", "-i", "sine=frequency=440:duration=12",
+      "-c:v", "libx264", "-preset", "ultrafast", "-g", "60", "-c:a", "aac", "-shortest", src,
+    ]);
+    const bug = {
+      teamName: "Woodinville", teamScore: 14, opponentName: "Redmond", opponentScore: 7,
+      periodLabel: "2nd Half", primaryLabel: "3rd & 6", downLabel: "3rd & 6",
+      fieldLabel: "Ball on 28 → 1st: 33", possession: "team", final: false,
+    };
+    const overlays = [];
+    for (const [i, b] of [bug, { ...bug, teamScore: 20, primaryLabel: "1st & 10" }].entries()) {
+      const file = join(dir, `bug-${i}.png`);
+      await writeFile(file, await renderScorebugPng(b, { width: 1920, height: 1080 }));
+      overlays.push({ file, fromMs: i * 3000, toMs: i === 0 ? 3000 : 6000 });
+    }
+    const cases = {
+      copy: { overlays: [] },
+      reencode: { overlays: [], reencode: true },
+      overlay: { overlays },
+    };
+    for (const [name, opts] of Object.entries(cases)) {
+      const output = join(dir, `${name}.mp4`);
+      await run("ffmpeg", exportArgs({ input: src, output, startMs: 2500, endMs: 8500, ...opts }), { onLine: () => {} });
+      const probe = JSON.parse(await run("ffprobe", ["-v", "error", "-print_format", "json", "-show_format", "-show_streams", output]));
+      const d = probeDetails(probe);
+      console.log(`selftest ${name}: ${d.width}x${d.height} ${(d.durationMs / 1000).toFixed(2)}s audio=${d.hasAudio}`);
+      if (Math.abs(d.durationMs - 6000) > 1500 || !d.hasAudio) throw new Error(`selftest ${name} looks wrong`);
+    }
+    // Keep a frame from each overlay stretch for a visual check.
+    for (const at of ["1.0", "4.0"]) {
+      const frame = join(dir, `frame-${at}.jpg`);
+      await run("ffmpeg", ["-hide_banner", "-nostdin", "-y", "-ss", at, "-i", join(dir, "overlay.mp4"), "-frames:v", "1", "-q:v", "4", frame]);
+      await bucket.upload(frame, { destination: `exports/selftest/frame-${at}.jpg`, contentType: "image/jpeg" });
+    }
+    console.log("selftest passed");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const [command, cameraId] = process.argv.slice(2);
+  if (command === "selftest") return selftest();
   if (command === "watch") {
     // Inboxes first, so a newly matched game folder is checked in the same run.
     await runInboxes();
     await runWatches();
     return;
   }
+  if (command === "export" && cameraId) {
+    try {
+      await runExport(cameraId);
+      console.log(`Export ${cameraId} ready`);
+    } catch (err) {
+      console.error(err);
+      await updateExport(cameraId, { status: "failed", error: shortError(err) });
+      process.exitCode = 1;
+    }
+    return;
+  }
   if (!["import", "process"].includes(command) || !cameraId) {
-    throw new Error("Usage: main.mjs import|process <cameraId> | watch");
+    throw new Error("Usage: main.mjs import|process <cameraId> | export <exportId> | watch");
   }
   let camera = await loadCamera(cameraId);
   try {
