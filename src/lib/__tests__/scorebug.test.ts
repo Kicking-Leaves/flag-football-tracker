@@ -58,7 +58,7 @@ describe("scorebugFromGameState", () => {
       periodLabel: "2nd Half",
       primaryLabel: "2nd & 7",
       downLabel: "2nd & 7",
-      fieldLabel: "Ball on 35 → 1st: 42",
+      fieldLabel: "Ball on 35 · 1st down at 42",
       possession: "team",
       final: false,
     });
@@ -104,7 +104,7 @@ describe("scorebugFromGameState", () => {
       "Falcons",
     );
 
-    expect(bug.fieldLabel).toBe("Ball on 44 → 1st: END");
+    expect(bug.fieldLabel).toBe("Ball on 44 · Goal to go");
   });
 });
 
@@ -139,7 +139,7 @@ describe("scorebugFromOverlayRow", () => {
       periodLabel: "2nd Half",
       primaryLabel: "3rd & 4",
       downLabel: "3rd & 4",
-      fieldLabel: "Ball on 28 → 1st: 32",
+      fieldLabel: "Ball on 28 · 1st down at 32",
       possession: "opponent",
       final: false,
     });

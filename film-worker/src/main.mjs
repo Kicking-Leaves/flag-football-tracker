@@ -543,7 +543,7 @@ async function selftest() {
     const bug = {
       teamName: "Woodinville", teamScore: 14, opponentName: "Redmond", opponentScore: 7,
       periodLabel: "2nd Half", primaryLabel: "3rd & 6", downLabel: "3rd & 6",
-      fieldLabel: "Ball on 28 → 1st: 33", possession: "team", final: false,
+      fieldLabel: "Ball on 28 · 1st down at 33", possession: "team", final: false,
     };
     const overlays = [];
     for (const [i, b] of [bug, { ...bug, teamScore: 20, primaryLabel: "1st & 10" }].entries()) {

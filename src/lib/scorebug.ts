@@ -23,7 +23,7 @@ export interface ScorebugData {
   primaryLabel: string;
   /** "2nd & 7". Null when no down is live (final, or awaiting an OT try). */
   downLabel: string | null;
-  /** "Ball on 35 → 1st: END". Null when no down is live. */
+  /** "Ball on 28 · 1st down at 33" or "Ball on 44 · Goal to go". Null when no down is live. */
   fieldLabel: string | null;
   /** Side with the ball. Null when no down is live. */
   possession: Possession | null;
@@ -104,10 +104,13 @@ export function formatScorebug(input: ScorebugInput): ScorebugData {
     // Never empty: an unpopulated headline would leave a hole in the bar.
     primaryLabel: input.completed ? "FINAL" : (downLabel ?? "OT TRY"),
     downLabel,
+    // No colons: "1st: 33" read like a game clock (":33").
     fieldLabel: downIsLive
-      ? `Ball on ${input.lineOfScrimmage} → 1st: ${firstDownTargetLabel(
-          input.firstDownTarget,
-        )}`
+      ? `Ball on ${input.lineOfScrimmage} · ${
+          firstDownTargetLabel(input.firstDownTarget) === "END"
+            ? "Goal to go"
+            : `1st down at ${input.firstDownTarget}`
+        }`
       : null,
     possession: downIsLive ? input.possession : null,
     final: input.completed,
