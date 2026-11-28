@@ -272,7 +272,7 @@ async function runExport(exportId) {
       const segments = validSegments(job.overlay_segments, totalMs);
       for (const [i, s] of segments.entries()) {
         const file = join(dir, `bug-${i}.png`);
-        await writeFile(file, await renderScorebugPng(s.bug, { width, height }));
+        await writeFile(file, await renderScorebugPng(s.bug, { width, height, position: job.overlay_position }));
         overlays.push({ file, fromMs: s.fromMs, toMs: s.toMs });
       }
       if (overlays.length === 0) throw new Error("Nothing to show on the scoreboard for this stretch.");

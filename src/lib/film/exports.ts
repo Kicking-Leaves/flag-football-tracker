@@ -2,6 +2,7 @@
 // that camera's original, reusing an earlier identical cut when there is one.
 
 import { getGame, getTeam } from "@/lib/db";
+import type { ScorebugPosition } from "@/components/overlay/ScorebugBar";
 import type { GameState } from "@/lib/types";
 import type { GameAccess } from "./access";
 import { getFilmClips, getTeamPlayWindow } from "./db";
@@ -23,6 +24,7 @@ export interface ExportRequest {
   playId?: number;
   clipId?: string;
   overlay: boolean;
+  position: ScorebugPosition;
 }
 
 /** In-flight cuts older than this are assumed lost (e.g. the job never started). */
@@ -85,6 +87,7 @@ export async function requestExport(access: GameAccess, req: ExportRequest): Pro
     .eq("start_ms", cut.startMs)
     .eq("end_ms", cut.endMs)
     .eq("overlay", req.overlay)
+    .eq("overlay_position", req.overlay ? req.position : "bottom-left")
     .in("status", ["queued", "processing", "ready"])
     .gt("expires_at", new Date(Date.now() + 3_600_000).toISOString())
     .order("created_at", { ascending: false })
@@ -120,6 +123,7 @@ export async function requestExport(access: GameAccess, req: ExportRequest): Pro
       end_ms: cut.endMs,
       overlay: req.overlay,
       overlay_segments: segments,
+      overlay_position: req.overlay ? req.position : "bottom-left",
       file_name: exportFileName({
         gameDate: game.game_date,
         opponent: game.opponent_name,

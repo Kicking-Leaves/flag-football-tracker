@@ -274,3 +274,12 @@ describe("download cuts", () => {
     expect(JSON.stringify(tree)).toContain("WOODINVILLE");
   });
 });
+
+describe("scoreboard position", () => {
+  const bug = { teamName: "A", teamScore: 0, opponentName: "B", opponentScore: 0, primaryLabel: "1st & 10", periodLabel: "1st Half", fieldLabel: null, possession: null, final: false };
+  it("centres the bar along the top for top-center", () => {
+    const holder = scorebugTree(bug, { width: 1920, height: 1080, position: "top-center" }).props.children[0];
+    expect(holder.props.style).toMatchObject({ top: 66.24, left: 0, right: 0, justifyContent: "center" });
+    expect(holder.props.style.bottom).toBeUndefined();
+  });
+});

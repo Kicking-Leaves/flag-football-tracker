@@ -1,3 +1,4 @@
+import { isScorebugPosition } from "@/components/overlay/ScorebugBar";
 import { filmErrorResponse, gameAccess, UUID_RE } from "@/lib/film/access";
 import { getFilmCamera } from "@/lib/film/db";
 import { requestExport } from "@/lib/film/exports";
@@ -15,6 +16,7 @@ export async function POST(request: Request) {
       playId?: number;
       clipId?: string;
       overlay?: boolean;
+      position?: string;
     };
     if (!body.cameraId || !UUID_RE.test(body.cameraId)) throw new FilmError("Pick a camera.");
     if (body.clipId !== undefined && !UUID_RE.test(String(body.clipId))) throw new FilmError("Clip not found.", 404);
@@ -27,6 +29,7 @@ export async function POST(request: Request) {
       playId: body.playId,
       clipId: body.clipId,
       overlay: Boolean(body.overlay),
+      position: isScorebugPosition(body.position) ? body.position : "bottom-left",
     });
     return Response.json({ export: created });
   } catch (err) {

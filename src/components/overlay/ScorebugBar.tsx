@@ -1,6 +1,17 @@
 import type { ScorebugData } from "@/lib/scorebug";
 
-export type ScorebugPosition = "bottom-left" | "bottom-center" | "top-left";
+export type ScorebugPosition = "bottom-left" | "bottom-center" | "top-left" | "top-center";
+
+export const SCOREBUG_POSITIONS: { value: ScorebugPosition; label: string }[] = [
+  { value: "bottom-left", label: "Bottom left" },
+  { value: "bottom-center", label: "Bottom center" },
+  { value: "top-left", label: "Top left" },
+  { value: "top-center", label: "Top center" },
+];
+
+export function isScorebugPosition(value: unknown): value is ScorebugPosition {
+  return SCOREBUG_POSITIONS.some((p) => p.value === value);
+}
 
 interface ScorebugBarProps {
   data: ScorebugData;
@@ -18,7 +29,9 @@ export default function ScorebugBar({ data, position }: ScorebugBarProps) {
   const placement =
     position === "top-left"
       ? "top-[3em] left-[3em]"
-      : position === "bottom-center"
+      : position === "top-center"
+        ? "top-[3em] left-1/2 -translate-x-1/2"
+        : position === "bottom-center"
         ? "bottom-[3em] left-1/2 -translate-x-1/2"
         : "bottom-[3em] left-[3em]";
 

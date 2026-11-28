@@ -1,3 +1,5 @@
+import type { ScorebugPosition } from "@/components/overlay/ScorebugBar";
+
 export type FilmCameraStatus = "queued" | "importing" | "processing" | "ready" | "failed";
 
 /** A camera recording for one game (rr_film_cameras). */
@@ -108,6 +110,7 @@ export interface FilmExport {
   start_ms: number;
   end_ms: number;
   overlay: boolean;
+  overlay_position: ScorebugPosition;
   file_name: string;
   status: FilmExportStatus;
   progress: number;
@@ -119,7 +122,7 @@ export interface FilmExport {
 }
 
 export const EXPORT_COLUMNS =
-  "id, camera_id, game_id, start_ms, end_ms, overlay, file_name, status, progress, size_bytes, error, requested_by, created_at, expires_at";
+  "id, camera_id, game_id, start_ms, end_ms, overlay, overlay_position, file_name, status, progress, size_bytes, error, requested_by, created_at, expires_at";
 
 /** A ready camera with a playable link to its review copy. */
 export interface FilmPlayableCamera {

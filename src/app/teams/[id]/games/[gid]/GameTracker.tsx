@@ -1,5 +1,6 @@
 "use client";
 
+import { SCOREBUG_POSITIONS, type ScorebugPosition } from "@/components/overlay/ScorebugBar";
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -522,11 +523,11 @@ function OverlayLink({ token }: { token: string }) {
 
   // Lazy initializer: this dialog only opens after hydration, so window is
   // available, but guard anyway rather than reading it during a server render.
-  const [url] = useState(() =>
-    typeof window === "undefined"
-      ? ""
-      : `${window.location.origin}/overlay/${token}?delay=6`,
-  );
+  const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
+  const [position, setPosition] = useState<ScorebugPosition>("bottom-left");
+  const url = origin
+    ? `${origin}/overlay/${token}?delay=6${position === "bottom-left" ? "" : `&pos=${position}`}`
+    : "";
 
   async function copy() {
     try {
@@ -545,6 +546,20 @@ function OverlayLink({ token }: { token: string }) {
         Add this as a browser source in Mevo Studio or OBS. Anyone with the link
         can see this game&apos;s score.
       </p>
+      <label className="mb-2 flex items-center justify-between gap-2 text-sm">
+        <span className="font-semibold">Position</span>
+        <select
+          value={position}
+          onChange={(e) => setPosition(e.target.value as ScorebugPosition)}
+          className="rounded-lg bg-gray-100 px-2 py-1.5"
+        >
+          {SCOREBUG_POSITIONS.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <input
         readOnly
         value={url}

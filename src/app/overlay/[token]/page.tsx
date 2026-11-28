@@ -2,17 +2,11 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getOverlayScoreboard } from "@/lib/db";
 import { scorebugFromOverlayRow } from "@/lib/scorebug";
-import type { ScorebugPosition } from "@/components/overlay/ScorebugBar";
+import { isScorebugPosition } from "@/components/overlay/ScorebugBar";
 import OverlayScorebug from "./OverlayScorebug";
 
 // The overlay must never be cached: a stale scorebug is worse than none.
 export const dynamic = "force-dynamic";
-
-const POSITIONS: ScorebugPosition[] = [
-  "bottom-left",
-  "bottom-center",
-  "top-left",
-];
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -43,9 +37,8 @@ export default async function OverlayPage({
   const row = await getOverlayScoreboard(supabase, token);
   if (!row) notFound();
 
-  const requested = one(query.pos) as ScorebugPosition | undefined;
-  const position =
-    requested && POSITIONS.includes(requested) ? requested : "bottom-left";
+  const requested = one(query.pos);
+  const position = isScorebugPosition(requested) ? requested : "bottom-left";
 
   return (
     <>
