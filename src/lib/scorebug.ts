@@ -62,6 +62,8 @@ export interface OverlayScoreboardRow {
   first_down_target: number;
   completed: boolean;
   awaiting_ot_conversion: boolean;
+  /** False for a team link while the team has no game to show. */
+  has_game?: boolean;
 }
 
 export function ordinal(n: number): string {
@@ -163,4 +165,9 @@ export function scorebugFromOverlayRow(
     completed: row.completed,
     awaitingOvertimeConversion: row.awaiting_ot_conversion,
   });
+}
+
+/** The overlay's scorebug, or null when a team link has no game to show. */
+export function overlayScorebug(row: OverlayScoreboardRow): ScorebugData | null {
+  return row.has_game === false ? null : scorebugFromOverlayRow(row);
 }

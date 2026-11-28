@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getOverlayScoreboard } from "@/lib/db";
-import { scorebugFromOverlayRow, type ScorebugData } from "@/lib/scorebug";
+import { overlayScorebug, type ScorebugData } from "@/lib/scorebug";
 import ScorebugBar, {
   type ScorebugPosition,
 } from "@/components/overlay/ScorebugBar";
@@ -15,7 +15,8 @@ const TICK_MS = 250;
 
 interface OverlayScorebugProps {
   token: string;
-  initial: ScorebugData;
+  /** Null while a team link has no game to show: the overlay stays empty. */
+  initial: ScorebugData | null;
   position: ScorebugPosition;
   /**
    * Seconds to hold each update back before showing it. The video path (encode
@@ -30,7 +31,7 @@ interface OverlayScorebugProps {
 interface Snapshot {
   /** When this state became visible-eligible (wall clock ms). */
   at: number;
-  data: ScorebugData;
+  data: ScorebugData | null;
 }
 
 export default function OverlayScorebug({
@@ -48,8 +49,8 @@ export default function OverlayScorebug({
   // immediately rather than leaving the frame empty for `delaySeconds` at
   // stream start. The queue only holds changes still waiting out the delay.
   const queue = useRef<Snapshot[]>([]);
-  const lastQueued = useRef<ScorebugData>(initial);
-  const [visible, setVisible] = useState<ScorebugData>(initial);
+  const lastQueued = useRef<ScorebugData | null>(initial);
+  const [visible, setVisible] = useState<ScorebugData | null>(initial);
   const [stale, setStale] = useState(false);
 
   // Poll the narrow RPC. One row, a handful of scalars — cheap enough that
@@ -61,7 +62,7 @@ export default function OverlayScorebug({
       try {
         const row = await getOverlayScoreboard(supabase, token);
         if (cancelled || !row) return;
-        const data = scorebugFromOverlayRow(row);
+        const data = overlayScorebug(row);
         if (JSON.stringify(lastQueued.current) !== JSON.stringify(data)) {
           lastQueued.current = data;
           queue.current.push({ at: Date.now(), data });
@@ -106,7 +107,7 @@ export default function OverlayScorebug({
         debug ? "outline outline-[0.15em] -outline-offset-[0.15em] outline-fuchsia-500" : ""
       }`}
     >
-      <ScorebugBar data={visible} position={position} />
+      {visible && <ScorebugBar data={visible} position={position} />}
       {debug && (
         <div className="absolute left-[3em] top-[3em] rounded-[0.3em] bg-fuchsia-600/90 px-[0.8em] py-[0.4em] font-mono text-[0.7em] text-white">
           delay {delaySeconds}s · scale {scale} · {position}

@@ -1073,6 +1073,13 @@ export async function getOverlayScoreboard(
   return rows[0] ?? null;
 }
 
+/** The team's stream overlay token: its link follows whichever game is being scored. */
+export async function getTeamOverlayToken(supabase: SupabaseClient, teamId: string): Promise<string | null> {
+  const { data, error } = await supabase.from("rr_teams").select("overlay_token").eq("id", teamId).maybeSingle();
+  if (error) throw error;
+  return (data?.overlay_token as string | undefined) ?? null;
+}
+
 /** Issue a fresh overlay token, invalidating any URL already handed out. */
 export async function rotateOverlayToken(
   supabase: SupabaseClient,

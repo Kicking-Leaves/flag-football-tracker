@@ -1,6 +1,6 @@
 "use client";
 
-import { SCOREBUG_POSITIONS, type ScorebugPosition } from "@/components/overlay/ScorebugBar";
+import OverlayLinkCard from "@/components/overlay/OverlayLinkCard";
 import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -26,6 +26,9 @@ interface GameTrackerProps {
   opponentName: string;
   gameDate: string;
   overlayToken: string | null;
+  teamOverlayToken: string | null;
+  /** Admin/Coach: can issue a new team overlay link. */
+  canResetOverlay: boolean;
   initialState: GameState;
   /** Admins and coaches can delete games; stat keepers can't. */
   canDelete: boolean;
@@ -39,6 +42,8 @@ export default function GameTracker({
   teamName,
   opponentName,
   overlayToken,
+  teamOverlayToken,
+  canResetOverlay,
   initialState,
   canDelete,
 }: GameTrackerProps) {
@@ -379,7 +384,15 @@ export default function GameTracker({
                   />
                 </div>
               </div>
-              {overlayToken && <OverlayLink token={overlayToken} />}
+              {teamOverlayToken && (
+                <OverlayLinkCard
+                  compact
+                  teamId={teamId}
+                  teamToken={teamOverlayToken}
+                  gameToken={overlayToken}
+                  canReset={canResetOverlay}
+                />
+              )}
               {canDelete && (
                 <button
                   type="button"
@@ -510,70 +523,6 @@ export default function GameTracker({
         opponentName={opponentName}
       />
     </main>
-  );
-}
-
-/**
- * Surfaces the public overlay URL for pasting into a browser source (Mevo
- * Studio 4.2+, OBS). The token is the only credential, so treat the URL itself
- * as the secret — it grants read-only access to this game's scoreboard.
- */
-function OverlayLink({ token }: { token: string }) {
-  const [copied, setCopied] = useState(false);
-
-  // Lazy initializer: this dialog only opens after hydration, so window is
-  // available, but guard anyway rather than reading it during a server render.
-  const [origin] = useState(() => (typeof window === "undefined" ? "" : window.location.origin));
-  const [position, setPosition] = useState<ScorebugPosition>("bottom-left");
-  const url = origin
-    ? `${origin}/overlay/${token}?delay=6${position === "bottom-left" ? "" : `&pos=${position}`}`
-    : "";
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard API needs a secure context; the input below is selectable.
-    }
-  }
-
-  return (
-    <div>
-      <p className="mb-2 font-bold">Stream Overlay</p>
-      <p className="mb-2 text-sm text-gray-600">
-        Add this as a browser source in Mevo Studio or OBS. Anyone with the link
-        can see this game&apos;s score.
-      </p>
-      <label className="mb-2 flex items-center justify-between gap-2 text-sm">
-        <span className="font-semibold">Position</span>
-        <select
-          value={position}
-          onChange={(e) => setPosition(e.target.value as ScorebugPosition)}
-          className="rounded-lg bg-gray-100 px-2 py-1.5"
-        >
-          {SCOREBUG_POSITIONS.map((p) => (
-            <option key={p.value} value={p.value}>
-              {p.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <input
-        readOnly
-        value={url}
-        onFocus={(e) => e.currentTarget.select()}
-        className="mb-2 w-full rounded-lg bg-gray-100 px-3 py-2 font-mono text-xs"
-      />
-      <button
-        type="button"
-        onClick={copy}
-        className="w-full rounded-xl bg-indigo-600 py-3 font-bold text-white"
-      >
-        {copied ? "Copied!" : "Copy overlay URL"}
-      </button>
-    </div>
   );
 }
 

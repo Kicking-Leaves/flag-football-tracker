@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getOverlayScoreboard } from "@/lib/db";
-import { scorebugFromOverlayRow } from "@/lib/scorebug";
+import { overlayScorebug } from "@/lib/scorebug";
 import { isScorebugPosition } from "@/components/overlay/ScorebugBar";
 import OverlayScorebug from "./OverlayScorebug";
 
@@ -47,7 +47,7 @@ export default async function OverlayPage({
       <style>{`html,body{background:transparent!important;margin:0;overflow:hidden}`}</style>
       <OverlayScorebug
         token={token}
-        initial={scorebugFromOverlayRow(row)}
+        initial={overlayScorebug(row)}
         position={position}
         delaySeconds={num(query.delay, 6, 0, 60)}
         scale={num(query.scale, 1, 0.3, 3)}

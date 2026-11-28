@@ -4,6 +4,7 @@ import {
   ordinal,
   periodLabel,
   scorebugFromGameState,
+  overlayScorebug,
   scorebugFromOverlayRow,
   type OverlayScoreboardRow,
 } from "../scorebug";
@@ -129,6 +130,13 @@ describe("scorebugFromOverlayRow", () => {
       ...overrides,
     };
   }
+
+  it("hides the bar while a team link has no game to show", () => {
+    expect(overlayScorebug(makeRow({ has_game: false }))).toBeNull();
+    expect(overlayScorebug(makeRow({ has_game: true }))?.teamScore).toBe(21);
+    // Rows from before has_game existed still show.
+    expect(overlayScorebug(makeRow())?.teamName).toBe("Raiders");
+  });
 
   it("maps a flat RPC row to the same shape as game state", () => {
     expect(scorebugFromOverlayRow(makeRow())).toEqual({

@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getGame, getMyTeamRole, getPlayers, getTeam } from "@/lib/db";
+import { getGame, getMyTeamRole, getPlayers, getTeam, getTeamOverlayToken } from "@/lib/db";
 import { can } from "@/lib/permissions";
 import GameTracker from "./GameTracker";
 import StartGame from "./StartGame";
@@ -46,6 +46,8 @@ export default async function GamePage({
     );
   }
 
+  const teamOverlayToken = await getTeamOverlayToken(supabase, teamId).catch(() => null);
+
   return (
     <GameTracker
       teamId={teamId}
@@ -54,6 +56,8 @@ export default async function GamePage({
       opponentName={game.opponent_name}
       gameDate={game.game_date}
       overlayToken={game.overlay_token ?? null}
+      teamOverlayToken={teamOverlayToken}
+      canResetOverlay={can(role, "manageTeam")}
       initialState={game.game_data}
       canDelete={can(role, "deleteGame")}
     />
